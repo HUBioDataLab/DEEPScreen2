@@ -1,25 +1,13 @@
 import os
-import sys
-import cv2
 import json
-import torch
-import random
-import warnings
-import subprocess
-import numpy as np
 import pandas as pd
-from operator import itemgetter
-from torch.utils.data import Dataset
-from torch.utils.data.sampler import SubsetRandomSampler, BatchSampler, SequentialSampler
-"""
 from rdkit import Chem
 from rdkit.Chem import Draw
-from rdkit.Chem.Draw import DrawingOptions
-import cairosvg
-"""
+import random
+import cv2
+import numpy as np
 
-warnings.filterwarnings(action='ignore')
-
+# Dosya yollarını belirtin
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split("/")[0]
 
@@ -28,348 +16,58 @@ training_files_path = "{}/training_files".format(project_file_path)
 result_files_path = "{}/result_files".format(project_file_path)
 trained_models_path = "{}/trained_models".format(project_file_path)
 
-IMG_SIZE = 200
-
+activity_csv_path = "{}/target_training_datasets/CHEMBL286/activity_data.csv".format(training_files_path)
 
 def get_chemblid_smiles_inchi_dict(smiles_inchi_fl):
-    chemblid_smiles_inchi_dict = pd.read_csv("{}/{}".format(training_files_path, smiles_inchi_fl), sep="\t",
-                                 index_col=False).set_index('chembl_id').T.to_dict('list')
-
-    """
-    for key in chemblid_smiles_inchi_dict.keys():
-        print(key, chemblid_smiles_inchi_dict[key])
-        break
-    """
+    chemblid_smiles_inchi_dict = pd.read_csv(smiles_inchi_fl, sep=",", index_col=False).set_index('molecule_chembl_id').T.to_dict('list')
     return chemblid_smiles_inchi_dict
 
+def create_act_inact_files_for_all_targets(df, act_threshold=10.0, inact_threshold=20.0):
+    print("")
+    print("Creating act and inact files for all targets")
+    print("")
 
-def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rot=0, SIZE=200, rot_size=300):
-    mol = Chem.MolFromSmiles(smiles)
-    DrawingOptions.atomLabelFontSize = 55
-    DrawingOptions.dotsPerAngstrom = 100
-    DrawingOptions.bondLineWidth = 1.5
-    # Use MolToFile(mol, path, size, imageType="png", fitImage=True)
-    
-    # For higher quality of image
-    path_to_give_svg = os.path.join(training_files_path, "target_training_datasets", 
-                                tar_id, "imgs", "{}.svg".format(comp_id))
-    
-    path_to_give_png = os.path.join(training_files_path, "target_training_datasets", 
-                                    tar_id, "imgs", "{}.png".format(comp_id))
-    
-    Draw.MolToFile(mol, path_to_give_svg , size = (SIZE, SIZE ))
-    cairosvg.svg2png(url = path_to_give_svg, write_to = path_to_give_png)
-    subprocess.call(["rm", path_to_give_svg])
-    
-    # Make it larger with padding to prevent data loss while rotation
-    image = cv2.imread(path_to_give_png)
-    
-    white_color = (255,255,255)
-    full_image = np.full((rot_size, rot_size, 3), white_color, dtype = np.uint8)
-    # compute center offset
-    gap = rot_size - SIZE
-    (cX, cY) = (gap // 2, gap // 2)
-    
-    # copy image into center of result image
-    full_image[cY:cY + SIZE, cX:cX + SIZE] = image
-    
-    if rot != 0:
-        # Rotate it
-        (cX, cY) = (rot_size // 2, rot_size // 2)
-        M = cv2.getRotationMatrix2D((cX, cY), rot, 1.0)
-        full_image = cv2.warpAffine(full_image, M, (rot_size, rot_size), borderMode=cv2.INTER_LINEAR, #cv2.BORDER_CONSTANT, 
-                                    borderValue = white_color)
-    
-    # save result
-    cv2.imwrite(path_to_give_png, full_image)
-
-
-def create_preprocessed_bioact_file(chembl_filtered_bioact_fl, chembl_version):
-    raw_dataset_df = pd.read_csv("{}/{}".format(training_files_path, chembl_filtered_bioact_fl), sep="\t", index_col=False)
-    # keys are compound protein pairs values are list of bioactivities
-    annot_dict = dict()
-    for ind, row in raw_dataset_df.iterrows():
-        chembl_tid = row["Target_CHEMBL_ID"]
-        chembl_cid = row["Compound_CHEMBL_ID"]
-        standard_units = row["standard_units"]
-        row["year"] = row["year"]
-
-        if standard_units in ["uM", "nM", "M"]:
-            if standard_units == "nM":
-                row["standard_value"] = round(row["standard_value"] / pow(10,3), 3)
-            elif standard_units == "M":
-                row["standard_value"] = round(row["standard_value"] / pow(10,6), 3)
-            else:
-                row["standard_value"] = round(row["standard_value"], 3)
-            # standard_units = "uM"
-            row["standard_units"] = "uM"
-            try:
-                annot_dict["{},{}".format(chembl_tid, chembl_cid)].append(list(row))
-            except:
-                annot_dict["{},{}".format(chembl_tid, chembl_cid)] = [list(row)]
-
-    out_fl = open("{}/{}_preprocessed_filtered_bioactivity_dataset.tsv".format(training_files_path, chembl_version), "w")
-    out_fl.write("\t".join(list(raw_dataset_df.columns)))
-    for key in annot_dict.keys():
-        if len(annot_dict[key])>1:
-            median_std_val = 0.0
-
-            annot_dict[key]  = sorted(annot_dict[key], key=itemgetter(6))
-            # print(annot_dict[key])
-
-            if len(annot_dict[key])%2==1:
-                median = int(len(annot_dict[key])/2)
-                median_bioactivity = annot_dict[key][median]
-                out_fl.write("\n" + "\t".join([str(col) for col in median_bioactivity]))
-
-            else:
-                median = int(len(annot_dict[key])/2)
-
-                median_std_val = (annot_dict[key][median][6]+annot_dict[key][median-1][6])/2
-                annot_dict[key][median][6] = median_std_val
-                median_bioactivity = annot_dict[key][median]
-                out_fl.write("\n" + "\t".join([str(col) for col in median_bioactivity]))
-        else:
-
-            out_fl.write("\n"+"\t".join([str(col) for col in annot_dict[key][0]]))
-
-    out_fl.close()
-
-
-def get_uniprot_chembl_sp_id_mapping(chembl_uni_prot_mapping_fl):
-    id_mapping_fl = open("{}/{}".format(training_files_path, chembl_uni_prot_mapping_fl))
-    lst_id_mapping_fl = id_mapping_fl.read().split("\n")
-    id_mapping_fl.close()
-    uniprot_to_chembl_dict = dict()
-    for line in lst_id_mapping_fl[1:-1]:
-        # 'B2GV46', 'CHEMBL3886125', 'Free fatty acid receptor 3', 'SINGLE PROTEIN'
-        uniprot_id, chembl_id, prot_name, target_type = line.split("\t")
-        if target_type=="SINGLE PROTEIN":
-            if uniprot_id in uniprot_to_chembl_dict:
-                uniprot_to_chembl_dict[uniprot_id].append(chembl_id)
-            else:
-                uniprot_to_chembl_dict[uniprot_id] = [chembl_id]
-    count = 0
-    for u_id in uniprot_to_chembl_dict:
-        if len(uniprot_to_chembl_dict[u_id])>1:
-            count += 1
-
-    return uniprot_to_chembl_dict
-
-
-def get_chembl_uniprot_sp_id_mapping(chembl_mapping_fl):
-    id_mapping_fl = open("{}/{}".format(training_files_path, chembl_mapping_fl))
-    lst_id_mapping_fl = id_mapping_fl.read().split("\n")
-    id_mapping_fl.close()
-    chembl_to_uniprot_dict = dict()
-    for line in lst_id_mapping_fl[1:-1]:
-        # 'B2GV46', 'CHEMBL3886125', 'Free fatty acid receptor 3', 'SINGLE PROTEIN'
-        uniprot_id, chembl_id, prot_name, target_type = line.split("\t")
-        if target_type=="SINGLE PROTEIN":
-            if chembl_id in chembl_to_uniprot_dict:
-                chembl_to_uniprot_dict[chembl_id].append(uniprot_id)
-            else:
-                chembl_to_uniprot_dict[chembl_id] = [uniprot_id]
-    count = 0
-    for chembl_id in chembl_to_uniprot_dict:
-        if len(chembl_to_uniprot_dict[chembl_id])>1:
-            count += 1
-
-
-    print(count)
-
-    return chembl_to_uniprot_dict
-
-
-def get_act_inact_list_for_a_target(target, fl):
-    act_list = []
-    inact_list = []
-
-    with open("{}/{}".format(training_files_path, fl))  as f:
-        for line in f:
-            if line != "":
-                line=line.split("\n")[0]
-                chembl_part, comps = line.split("\t")
-                chembl_target_id, act_inact = chembl_part.split("_")
-                if chembl_target_id == target:
-                    if act_inact == "act":
-                        act_list = comps.split(",")
-                    else:
-                        inact_list = comps.split(",")
-                        break
-
-    return act_list, inact_list
-
-
-def get_act_inact_list_for_all_targets(fl):
-    act_inact_dict = dict()
-    with open("{}/{}".format(training_files_path, fl))  as f:
-        for line in f:
-            if line != "":
-                line=line.split("\n")[0]
-                chembl_part, comps = line.split("\t")
-                chembl_target_id, act_inact = chembl_part.split("_")
-                if act_inact == "act":
-                    act_list = comps.split(",")
-                    act_inact_dict[chembl_target_id] = [act_list, []]
-                else:
-                    inact_list = comps.split(",")
-                    act_inact_dict[chembl_target_id][1] = inact_list
-    return act_inact_dict
-
-
-def create_act_inact_files_for_all_targets(fl, chembl_version, act_threshold, inact_threshold):
-    pre_filt_chembl_df = pd.read_csv("{}/{}".format(training_files_path, fl), sep="\t" ,index_col=False)
-
-    act_rows_df = pre_filt_chembl_df[pre_filt_chembl_df["standard_value"]<=10.0]
-    inact_rows_df = pre_filt_chembl_df[pre_filt_chembl_df["standard_value"] >= 20.0]
-    # 'Target_CHEMBL_ID', 'Compound_CHEMBL_ID', 'pchembl_value',
+    act_rows_df = df[df["value"] <= act_threshold]
+    inact_rows_df = df[df["value"] >= inact_threshold]
     target_act_inact_comp_dict = dict()
 
     for ind, row in act_rows_df.iterrows():
-        chembl_tid = row['Target_CHEMBL_ID']
-        chembl_cid = row['Compound_CHEMBL_ID']
+        chembl_tid = row['target_chembl_id']
+        chembl_cid = row['molecule_chembl_id']
 
         if chembl_tid in target_act_inact_comp_dict:
-            target_act_inact_comp_dict[chembl_tid][0].add(chembl_cid)
+            target_act_inact_comp_dict[chembl_tid][0].append(chembl_cid)
         else:
-            target_act_inact_comp_dict[chembl_tid] = [set(), set()]
-            target_act_inact_comp_dict[chembl_tid][0].add(chembl_cid)
+            target_act_inact_comp_dict[chembl_tid] = [[], []]
+            target_act_inact_comp_dict[chembl_tid][0].append(chembl_cid)
 
     for ind, row in inact_rows_df.iterrows():
-        chembl_tid = row['Target_CHEMBL_ID']
-        chembl_cid = row['Compound_CHEMBL_ID']
+        chembl_tid = row['target_chembl_id']
+        chembl_cid = row['molecule_chembl_id']
         if chembl_tid in target_act_inact_comp_dict:
-            target_act_inact_comp_dict[chembl_tid][1].add(chembl_cid)
+            target_act_inact_comp_dict[chembl_tid][1].append(chembl_cid)
         else:
-            target_act_inact_comp_dict[chembl_tid] = [set(), set()]
-            target_act_inact_comp_dict[chembl_tid][1].add(chembl_cid)
+            target_act_inact_comp_dict[chembl_tid] = [[], []]
+            target_act_inact_comp_dict[chembl_tid][1].append(chembl_cid)
 
-    act_inact_comp_fl = open("{}/{}_preprocessed_filtered_act_inact_comps_{}_{}.tsv".format(training_files_path, chembl_version, act_threshold, inact_threshold), "w")
-    act_inact_count_fl = open("{}/{}_preprocessed_filtered_act_inact_count_{}_{}.tsv".format(training_files_path, chembl_version, act_threshold, inact_threshold), "w")
+    return target_act_inact_comp_dict
 
-    for targ in target_act_inact_comp_dict:
+def get_act_inact_list_for_all_targets(act_inact_dict):
+    return act_inact_dict
 
-        str_act = "{}_act\t".format(targ) + ",".join(target_act_inact_comp_dict[targ][0])
-        act_inact_comp_fl.write("{}\n".format(str_act))
+def create_final_randomized_training_val_test_sets(activity_csv_path, smiles_inchi_fl, act_threshold=10.0, inact_threshold=20.0):
+    print("")
+    print("Creating final randomized training, validation and test sets")
+    print("")
 
-        str_inact = "{}_inact\t".format(targ) + ",".join(target_act_inact_comp_dict[targ][1])
-        act_inact_comp_fl.write("{}\n".format(str_inact))
+    df = pd.read_csv(activity_csv_path)
+    chemblid_smiles_dict = df.set_index('molecule_chembl_id')['canonical_smiles'].to_dict()
+    act_inact_dict = create_act_inact_files_for_all_targets(df, act_threshold, inact_threshold)
+    act_inact_dict = get_act_inact_list_for_all_targets(act_inact_dict)
 
-        # write act inact count
-        str_act_inact_count = "{}\t{}\t{}\n".format(targ, len(target_act_inact_comp_dict[targ][0]), len(target_act_inact_comp_dict[targ][1]))
-        act_inact_count_fl.write(str_act_inact_count)
-
-    act_inact_count_fl.close()
-    act_inact_comp_fl.close()
-
-
-def create_act_inact_files_similarity_based_neg_enrichment_threshold(act_inact_fl, blast_sim_fl, sim_threshold):
-    data_point_threshold = 100
-    uniprot_chemblid_dict = get_uniprot_chembl_sp_id_mapping("chembl27_uniprot_mapping.txt")
-    chemblid_uniprot_dict = get_chembl_uniprot_sp_id_mapping("chembl27_uniprot_mapping.txt")
-    all_act_inact_dict = get_act_inact_list_for_all_targets(act_inact_fl)
-    new_all_act_inact_dict = dict()
-    count = 0
-    for targ in all_act_inact_dict.keys():
-        act_list, inact_list = all_act_inact_dict[targ]
-        if len(act_list)>=data_point_threshold and len(inact_list)>=data_point_threshold:
-            count += 1
-    print(count)
-
-    seq_to_other_seqs_score_dict = dict()
-    with open("{}/{}".format(training_files_path, blast_sim_fl)) as f:
-        for line in f:
-            parts = line.split("\t")
-            # print(parts)
-            u_id1, u_id2, score = parts[0].split("|")[1], parts[1].split("|")[1], float(parts[2])
-            if u_id1!=u_id2:
-                if u_id1 in seq_to_other_seqs_score_dict:
-                    seq_to_other_seqs_score_dict[u_id1][u_id2] = score
-                else:
-                    seq_to_other_seqs_score_dict[u_id1] = dict()
-                    seq_to_other_seqs_score_dict[u_id1][u_id2] = score
-                if u_id2 in seq_to_other_seqs_score_dict:
-                    seq_to_other_seqs_score_dict[u_id2][u_id1] = score
-                else:
-                    seq_to_other_seqs_score_dict[u_id2] = dict()
-                    seq_to_other_seqs_score_dict[u_id2][u_id1] = score
-
-    for u_id in seq_to_other_seqs_score_dict:
-        seq_to_other_seqs_score_dict[u_id] = {k: v for k, v in sorted(seq_to_other_seqs_score_dict[u_id].items(), key=lambda item: item[1], reverse=True)}
-
-
-    count = 0
-    for chembl_target_id in all_act_inact_dict.keys():
-        count += 1
-        # print(count, len(all_act_inact_dict.keys()), chembl_target_id)
-        target_act_list, target_inact_list = all_act_inact_dict[chembl_target_id]
-        target_act_list, target_inact_list = target_act_list[:], target_inact_list[:]
-        uniprot_target_id = chemblid_uniprot_dict[chembl_target_id][0]
-        if uniprot_target_id in seq_to_other_seqs_score_dict:
-            for uniprot_other_target in seq_to_other_seqs_score_dict[uniprot_target_id]:
-                if seq_to_other_seqs_score_dict[uniprot_target_id][uniprot_other_target]>=sim_threshold:
-
-                    try:
-                        other_target_chembl_id = uniprot_chemblid_dict[uniprot_other_target][0]
-                        other_act_lst, other_inact_lst = all_act_inact_dict[other_target_chembl_id]
-                        set_non_act_inact = set(other_inact_lst) - set(target_act_list)
-                        set_new_inacts = set_non_act_inact - (set(target_inact_list) & set_non_act_inact)
-                        target_inact_list.extend(list(set_new_inacts))
-                    except:
-                        pass
-
-        new_all_act_inact_dict[chembl_target_id] = [target_act_list, target_inact_list]
-    count = 0
-    """
-    for targ in new_all_act_inact_dict.keys():
-        act_list, inact_list = new_all_act_inact_dict[targ]
-        if len(act_list)>=100 and len(inact_list)>=100:
-            print(targ, len(act_list), len(inact_list))
-        if len(inact_list) >= len(act_list):
-            inact_list = inact_list[:len(act_list)]
-        else:
-            act_list = act_list[:int(len(inact_list)*1.5)]
-            new_all_act_inact_dict[targ] = [act_list, inact_list]
-        if len(act_list)>=100 and len(inact_list)>=100:
-            count += 1
-            print(targ, len(act_list), len(inact_list))
-    print(count)
-    """
-
-    act_inact_comp_fl = open(
-        "{}/{}_blast_comp_{}.txt".format(training_files_path, act_inact_fl.split(".tsv")[0], sim_threshold), "w")
-    act_inact_count_fl = open(
-        "{}/{}_blast_count_{}.txt".format(training_files_path, act_inact_fl.split(".tsv")[0], sim_threshold), "w")
-
-    for targ in new_all_act_inact_dict.keys():
-        if len(new_all_act_inact_dict[targ][0])>=data_point_threshold and len(new_all_act_inact_dict[targ][1])>=data_point_threshold:
-
-            while "" in new_all_act_inact_dict[targ][0]:
-                new_all_act_inact_dict[targ][0].remove("")
-
-            while "" in new_all_act_inact_dict[targ][1]:
-                new_all_act_inact_dict[targ][1].remove("")
-
-            str_act = "{}_act\t".format(targ) + ",".join(new_all_act_inact_dict[targ][0])
-            act_inact_comp_fl.write("{}\n".format(str_act))
-
-            str_inact = "{}_inact\t".format(targ) + ",".join(new_all_act_inact_dict[targ][1])
-            act_inact_comp_fl.write("{}\n".format(str_inact))
-
-            # write act inact count
-            str_act_inact_count = "{}\t{}\t{}\n".format(targ, len(new_all_act_inact_dict[targ][0]), len(new_all_act_inact_dict[targ][1]))
-            act_inact_count_fl.write(str_act_inact_count)
-
-    act_inact_count_fl.close()
-    act_inact_comp_fl.close()
-
-
-def create_final_randomized_training_val_test_sets(neg_act_inact_fl, smiles_inchi_fl):
-    chemblid_smiles_dict = get_chemblid_smiles_inchi_dict(smiles_inchi_fl)
-    act_inact_dict = get_act_inact_list_for_all_targets(neg_act_inact_fl)
     for tar in act_inact_dict:
-        os.makedirs(os.path.join(training_files_path, "target_training_datasets", tar, "imgs"))
+        tar_path = os.path.join(training_files_path, "target_training_datasets", tar)
+        os.makedirs(os.path.join(tar_path, "imgs"), exist_ok=True)
         act_list, inact_list = act_inact_dict[tar]
         if len(inact_list) >= len(act_list):
             inact_list = inact_list[:len(act_list)]
@@ -393,114 +91,91 @@ def create_final_randomized_training_val_test_sets(neg_act_inact_fl, smiles_inch
         val_inact_comp_id_list = inact_list[inact_training_size:inact_training_size+inact_val_size]
         test_inact_comp_id_list = inact_list[inact_training_size+inact_val_size:]
 
-        print(tar, "all training act", len(act_list),len(training_act_comp_id_list), len(val_act_comp_id_list), len(test_act_comp_id_list) )
-        print(tar, "all training inact", len(inact_list), len(training_inact_comp_id_list), len(val_inact_comp_id_list),
-              len(test_inact_comp_id_list))
+        print(tar, "all training act", len(act_list), len(training_act_comp_id_list), len(val_act_comp_id_list), len(test_act_comp_id_list))
+        print(tar, "all training inact", len(inact_list), len(training_inact_comp_id_list), len(val_inact_comp_id_list), len(test_inact_comp_id_list))
         tar_train_val_test_dict = dict()
         tar_train_val_test_dict["training"] = []
         tar_train_val_test_dict["validation"] = []
         tar_train_val_test_dict["test"] = []
+        rotations = [(0, "0"), *[(angle, f"{angle}") for angle in range(10, 360, 10)]]
         for comp_id in training_act_comp_id_list:
             try:
-                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id][0])
+                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id], rotations, training_files_path)
                 tar_train_val_test_dict["training"].append([comp_id, 1])
-            except:
-                pass
+            except Exception as e:
+                print(f"Error creating training image for {comp_id}: {e}")
         for comp_id in val_act_comp_id_list:
             try:
-                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id][0])
+                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id], rotations, training_files_path)
                 tar_train_val_test_dict["validation"].append([comp_id, 1])
-            except:
-                pass
-
+            except Exception as e:
+                print(f"Error creating validation image for {comp_id}: {e}")
         for comp_id in test_act_comp_id_list:
             try:
-                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id][0])
+                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id], rotations, training_files_path)
                 tar_train_val_test_dict["test"].append([comp_id, 1])
-            except:
-                pass
-
+            except Exception as e:
+                print(f"Error creating test image for {comp_id}: {e}")
         for comp_id in training_inact_comp_id_list:
             try:
-                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id][0])
+                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id], rotations, training_files_path)
                 tar_train_val_test_dict["training"].append([comp_id, 0])
-            except:
-                pass
+            except Exception as e:
+                print(f"Error creating training image for {comp_id}: {e}")
         for comp_id in val_inact_comp_id_list:
             try:
-                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id][0])
+                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id], rotations, training_files_path)
                 tar_train_val_test_dict["validation"].append([comp_id, 0])
-            except:
-                pass
+            except Exception as e:
+                print(f"Error creating validation image for {comp_id}: {e}")
         for comp_id in test_inact_comp_id_list:
             try:
-                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id][0])
+                save_comp_imgs_from_smiles(tar, comp_id, chemblid_smiles_dict[comp_id], rotations, training_files_path)
                 tar_train_val_test_dict["test"].append([comp_id, 0])
-            except:
-                pass
+            except Exception as e:
+                print(f"Error creating test image for {comp_id}: {e}")
         random.shuffle(tar_train_val_test_dict["training"])
         random.shuffle(tar_train_val_test_dict["validation"])
         random.shuffle(tar_train_val_test_dict["test"])
 
-        with open(os.path.join(training_files_path, "target_training_datasets", tar, 'train_val_test_dict.json') , 'w') as fp:
+        with open(os.path.join(tar_path, 'train_val_test_dict.json'), 'w') as fp:
             json.dump(tar_train_val_test_dict, fp)
+        print(f"train_val_test_dict.json created at {os.path.join(tar_path, 'train_val_test_dict.json')}")
 
+def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rotations, target_prediction_dataset_path, SIZE=300):
+    print(f"Generating image for compound {comp_id} with SMILES {smiles}")
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        print(f"Invalid SMILES: {smiles}")
+        return
 
-class DEEPScreenDataset(Dataset):
-    def __init__(self, target_id, train_val_test):
-        self.target_id = target_id
-        self.train_val_test = train_val_test
-        self.training_dataset_path = "{}/target_training_datasets/{}".format(training_files_path, target_id)
-        self.train_val_test_folds = json.load(open(os.path.join(self.training_dataset_path, "train_val_test_dict.json")))
-        self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds[train_val_test]]
-        self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds[train_val_test]]
-        # print(self.label_list)
-    def __len__(self):
-        return len(self.compid_list)
+    Draw.DrawingOptions.atomLabelFontSize = 55
+    Draw.DrawingOptions.dotsPerAngstrom = 100
+    Draw.DrawingOptions.bondLineWidth = 1.5
 
-    def __getitem__(self, index):
+    base_path = os.path.join(target_prediction_dataset_path, "target_training_datasets", tar_id, "imgs")
 
-        comp_id = self.compid_list[index]
-        img_path = os.path.join(self.training_dataset_path, "imgs", "{}.png".format(comp_id))
-        img_arr = cv2.imread(img_path)
-        
-        #if random.random()>=0.50:
-        #    angle = random.randint(0,359)
-        #    rows, cols, channel = img_arr.shape
-        #    rotation_matrix = cv2.getRotationMatrix2D((cols / 2, rows / 2), angle, 1)
-        #    img_arr = cv2.warpAffine(img_arr, rotation_matrix, (cols, rows), cv2.INTER_LINEAR,
-        #                                         borderValue=(255, 255, 255))  # cv2.BORDER_CONSTANT, 255)
+    if not os.path.exists(base_path):
+        os.makedirs(base_path)
 
-        img_arr = np.array(img_arr, dtype=float) / 255.0
-        img_arr = img_arr.transpose((2, 0, 1))
-        label = self.label_list[index]
+    try:
+        image = Draw.MolToImage(mol, size=(SIZE, SIZE))
+        image_array = np.array(image)
+        image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
 
-        return img_arr, label, comp_id
+        for rot, suffix in rotations:
+            if rot != 0:
+                (cX, cY) = (SIZE // 2, SIZE // 2)
+                M = cv2.getRotationMatrix2D((cX, cY), rot, 1.0)
+                rotated_image = cv2.warpAffine(image_bgr, M, (SIZE, SIZE), borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
+            else:
+                rotated_image = image_bgr
 
+            path_to_save = os.path.join(base_path, f"{comp_id}{suffix}.png")
+            cv2.imwrite(path_to_save, rotated_image)
+            print(f"Image saved at {path_to_save}")
+    except Exception as e:
+        print(f"Error creating PNG for {comp_id}: {e}")
 
-def get_train_test_val_data_loaders(target_id, batch_size=32):
-    training_dataset = DEEPScreenDataset(target_id, "training")
-    validation_dataset = DEEPScreenDataset(target_id, "validation")
-    test_dataset = DEEPScreenDataset(target_id, "test")
-
-    train_sampler = SubsetRandomSampler(range(len(training_dataset)))
-    train_loader = torch.utils.data.DataLoader(training_dataset, batch_size=batch_size,
-                                              sampler=train_sampler, drop_last = True)
-    
-    validation_sampler = SubsetRandomSampler(range(len(validation_dataset)))
-    validation_loader = torch.utils.data.DataLoader(validation_dataset, batch_size=batch_size,
-                                               sampler=validation_sampler, drop_last = True)
-
-    test_sampler = SubsetRandomSampler(range(len(test_dataset)))
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size,
-                                               sampler=test_sampler, drop_last = True)
-
-    return train_loader, validation_loader, test_loader
-
-
-def get_training_target_list(chembl_version):
-    target_df = pd.read_csv(os.path.join(training_files_path, "{}_training_target_list.txt".format(chembl_version)), index_col=False, header=None)
-    # print(target_df)
-    # print(list(target_df[0]), len(list(target_df[0])))
-    return list(target_df[0])
-
+if __name__ == "__main__":
+    create_final_randomized_training_val_test_sets(activity_csv_path, activity_csv_path)
