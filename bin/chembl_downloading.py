@@ -5,7 +5,48 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 
+"""
+The input file containing ChEMBL IDs should be a plain text (.txt) file.
+The file should be formatted as follows:
+- Each line should contain exactly one ChEMBL ID.
+- No extra spaces or empty lines should be included.
+- The file should have a .txt extension.
+
+Example of a valid input file:
+-------------------------------
+CHEMBL25
+CHEMBL192
+CHEMBL1234567
+CHEMBL345
+-------------------------------
+
+Note: Other file formats such as .csv, .xlsx, or .json are not supported.
+Ensure that the file is saved as .txt for proper processing.
+
+Example commands to run the script:
+-----------------------------------
+
+1. Using a .txt file with ChEMBL IDs:
+   python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --assay_type=B --pchembl_threshold=6.0 --output_file=activity_data.csv
+
+2. Specifying multiple ChEMBL IDs directly in the command:
+   python chembl_downloading.py --target_chembl_id=CHEMBL25,CHEMBL192 --assay_type=B --pchembl_threshold=6.0 --output_file=activity_data.csv
+
+3. Combining a .txt file with additional specified ChEMBL IDs:
+   python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --target_chembl_id=CHEMBL345 --assay_type=B --pchembl_threshold=6.0 --output_file=activity_data.csv
+
+4. Specifying a custom output file name:
+   python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --output_file=custom_output.csv
+
+5. Limiting the number of CPU cores used:
+   python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --max_cores=4 --output_file=activity_data.csv
+
+6. Changing the assay type filter:
+   python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --assay_type=A --output_file=activity_data.csv
+"""
+
 def fetch_activities(target_chembl_ids, assay_types, pchembl_threshold):
+    print("Starting to fetch activities from ChEMBL...")  # Process start message
     base_url = "https://www.ebi.ac.uk/chembl/api/data/activity.json"
     params = {
         'target_chembl_id__in': ','.join(target_chembl_ids),
@@ -24,6 +65,7 @@ def fetch_activities(target_chembl_ids, assay_types, pchembl_threshold):
         data = response.json()
         if 'activities' in data:
             activities.extend(data['activities'])
+           
         else:
             print("No activities found.")
             break
@@ -45,6 +87,7 @@ def fetch_activities(target_chembl_ids, assay_types, pchembl_threshold):
     else:
         df = pd.DataFrame()
     
+    print("Finished fetching activities.")  # Process completion message
     return df
 
 def fetch_smiles(compound_id):
@@ -60,6 +103,7 @@ def fetch_smiles(compound_id):
         return compound_id, None
 
 def check_and_download_smiles(compound_ids):
+    print("Starting to download SMILES...")  # SMILES download start message
     smiles_data = []
 
     with ProcessPoolExecutor() as executor:
@@ -68,10 +112,19 @@ def check_and_download_smiles(compound_ids):
     for compound_id, smiles in results:
         if smiles:
             smiles_data.append((compound_id, smiles))
-        else:
-            print(f"No SMILES found for {compound_id}")
     
+    print("Finished downloading SMILES.")  # SMILES download completion message
     return smiles_data
+
+def read_chembl_ids_from_file(file_path):
+    if os.path.exists(file_path):
+        print(f"Reading ChEMBL IDs from {file_path}...")  # File read message
+        with open(file_path, 'r') as file:
+            chembl_ids = [line.strip() for line in file.readlines() if line.strip()]
+            return chembl_ids
+    else:
+        print(f"File {file_path} does not exist.")
+        return []
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download ChEMBL activity data and SMILES")
@@ -80,39 +133,49 @@ if __name__ == "__main__":
     parser.add_argument('--pchembl_threshold', type=float, default=6.0, help="Threshold for pChembl value to determine active/inactive")
     parser.add_argument('--output_file', type=str, default='activity_data.csv', help="Output file to save activity data")
     parser.add_argument('--max_cores', type=int, default=multiprocessing.cpu_count() - 1, help="Maximum number of CPU cores to use")
+    parser.add_argument('--smiles_input_file', type=str, help="Path to txt file containing ChEMBL IDs")
 
     args = parser.parse_args()
 
+    # Define base directory based on the location of the script
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    output_dir = os.path.join(base_dir, 'training_files', 'target_training_datasets', args.target_chembl_id.replace(',', '_'))
-    output_path = os.path.join(output_dir, args.output_file)
+
+    target_chembl_ids = []
     
-    if os.path.exists(output_path):
-        print(f"File {output_path} already exists. Skipping download.")
-    else:
-        os.makedirs(output_dir, exist_ok=True)
+    if args.target_chembl_id:
+        target_chembl_ids.extend(args.target_chembl_id.split(','))
+    
+    if args.smiles_input_file:
+        file_chembl_ids = read_chembl_ids_from_file(args.smiles_input_file)
+        target_chembl_ids.extend(file_chembl_ids)
+    
+    assay_types = args.assay_type.split(',')
+
+    for chembl_id in target_chembl_ids:
+        output_dir = os.path.join(base_dir, 'training_files', 'target_training_datasets', chembl_id)
+        output_path = os.path.join(output_dir, args.output_file)
         
-        if args.target_chembl_id:
-            target_chembl_ids = args.target_chembl_id.split(',')
-        else:
-            target_chembl_ids = []
+        if os.path.exists(output_path):
+            print(f"File {output_path} already exists. Skipping download.")
+            continue
 
-        assay_types = args.assay_type.split(',')
-
-        all_data = pd.DataFrame()
-        if target_chembl_ids:
-            data = fetch_activities(target_chembl_ids, assay_types, args.pchembl_threshold)
-            all_data = pd.concat([all_data, data])
-
-        if not all_data.empty:
-            compound_ids = all_data['molecule_chembl_id'].unique().tolist()
+        data = fetch_activities([chembl_id], assay_types, args.pchembl_threshold)
+        
+        if not data.empty:
+            compound_ids = data['molecule_chembl_id'].unique().tolist()
             smiles_data = check_and_download_smiles(compound_ids)
             
             if smiles_data:
+                # Only create directory if there is data to save
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
+                
                 smiles_df = pd.DataFrame(smiles_data, columns=["molecule_chembl_id", "canonical_smiles"])
-                all_data = all_data.merge(smiles_df, on='molecule_chembl_id')
-            
-            all_data.to_csv(output_path, index=False)
-            print(f"Activity data saved to {output_path}")
+                data = data.merge(smiles_df, on='molecule_chembl_id')
+                
+                data.to_csv(output_path, index=False)
+                print(f"Activity data for {chembl_id} saved to {output_path}")
+            else:
+                print(f"No SMILES data found for {chembl_id}.")
         else:
-            print("No activity data found.")
+            print(f"No activity data found for {chembl_id}.")
