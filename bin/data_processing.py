@@ -22,7 +22,8 @@ import multiprocessing
 import csv
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 import chemprop
-
+from chemprop.data import SplitType, make_split_indices,split_data_by_indices
+from chemprop.data import MoleculeDatapoint
 warnings.filterwarnings(action='ignore')
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split("/")[0]
@@ -240,45 +241,75 @@ def get_act_inact_list_for_all_targets(fl):
 
 
 def create_act_inact_files_for_targets(fl, target_id, chembl_version, pchembl_threshold=6, target_prediction_dataset_path=None):
+    # Read the initial dataframe
     pre_filt_chembl_df = pd.read_csv(fl, sep=",", index_col=False)
-    act_rows_df = pre_filt_chembl_df[pre_filt_chembl_df["pchembl_value"] >= pchembl_threshold]
-    inact_rows_df = pre_filt_chembl_df[pre_filt_chembl_df["pchembl_value"] < pchembl_threshold]
-    target_act_inact_comp_dict = dict()
+    
+    # Add active/inactive labels based on pchembl_threshold
+    pre_filt_chembl_df['activity_label'] = (pre_filt_chembl_df['pchembl_value'] >= pchembl_threshold).astype(int)
+    
+    # Now split the labeled data
+    train_ids, val_ids, test_ids = train_val_test_split(pre_filt_chembl_df, split_ratios=(0.8, 0.1, 0.1), 
+                                                        scaffold_split=True)
 
-    for ind, row in act_rows_df.iterrows():
-        chembl_tid = row['target_chembl_id']
-        chembl_cid = row['molecule_chembl_id']
+    # Create separate dataframes for train/val/test
+    train_df = pre_filt_chembl_df[pre_filt_chembl_df['molecule_chembl_id'].isin(train_ids)]
+    val_df = pre_filt_chembl_df[pre_filt_chembl_df['molecule_chembl_id'].isin(val_ids)]
+    test_df = pre_filt_chembl_df[pre_filt_chembl_df['molecule_chembl_id'].isin(test_ids)]
 
-        if chembl_tid in target_act_inact_comp_dict:
-            target_act_inact_comp_dict[chembl_tid][0].add(chembl_cid)
-        else:
-            target_act_inact_comp_dict[chembl_tid] = [set(), set()]
-            target_act_inact_comp_dict[chembl_tid][0].add(chembl_cid)
+    target_act_inact_comp_dict = {
+        'train': dict(),
+        'val': dict(),
+        'test': dict()
+    }
+    
+    # Process each split separately
+    for split_name, split_df in [('train', train_df), ('val', val_df), ('test', test_df)]:
+        # Group by activity label
+        act_rows_df = split_df[split_df['activity_label'] == 1]
+        inact_rows_df = split_df[split_df['activity_label'] == 0]
 
-    for ind, row in inact_rows_df.iterrows():
-        chembl_tid = row['target_chembl_id']
-        chembl_cid = row['molecule_chembl_id']
-        if chembl_tid in target_act_inact_comp_dict:
-            target_act_inact_comp_dict[chembl_tid][1].add(chembl_cid)
-        else:
-            target_act_inact_comp_dict[chembl_tid] = [set(), set()]
-            target_act_inact_comp_dict[chembl_tid][1].add(chembl_cid)
+        for ind, row in act_rows_df.iterrows():
+            chembl_tid = row['target_chembl_id']
+            chembl_cid = row['molecule_chembl_id']
 
-    act_inact_comp_fl = open("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path,target_id, chembl_version,  pchembl_threshold), "w")
-    act_inact_count_fl = open("{}/{}/{}_preprocessed_filtered_act_inact_count_pchembl_{}.tsv".format(target_prediction_dataset_path, target_id, chembl_version, pchembl_threshold), "w")
+            if chembl_tid in target_act_inact_comp_dict[split_name]:
+                target_act_inact_comp_dict[split_name][chembl_tid][0].add(chembl_cid)
+            else:
+                target_act_inact_comp_dict[split_name][chembl_tid] = [set(), set()]
+                target_act_inact_comp_dict[split_name][chembl_tid][0].add(chembl_cid)
 
-    for targ in target_act_inact_comp_dict:
-        str_act = "{}_act\t".format(targ) + ",".join(target_act_inact_comp_dict[targ][0])
-        act_inact_comp_fl.write("{}\n".format(str_act))
+        for ind, row in inact_rows_df.iterrows():
+            chembl_tid = row['target_chembl_id']
+            chembl_cid = row['molecule_chembl_id']
+            if chembl_tid in target_act_inact_comp_dict[split_name]:
+                target_act_inact_comp_dict[split_name][chembl_tid][1].add(chembl_cid)
+            else:
+                target_act_inact_comp_dict[split_name][chembl_tid] = [set(), set()]
+                target_act_inact_comp_dict[split_name][chembl_tid][1].add(chembl_cid)
 
-        str_inact = "{}_inact\t".format(targ) + ",".join(target_act_inact_comp_dict[targ][1])
-        act_inact_comp_fl.write("{}\n".format(str_inact))
+    # Write files for each split
+    for split_name in ['train', 'val', 'test']:
+        act_inact_comp_fl = open("{}/{}/{}_{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(
+            target_prediction_dataset_path, target_id, chembl_version, split_name, pchembl_threshold), "w")
+        act_inact_count_fl = open("{}/{}/{}_{}_preprocessed_filtered_act_inact_count_pchembl_{}.tsv".format(
+            target_prediction_dataset_path, target_id, chembl_version, split_name, pchembl_threshold), "w")
 
-        str_act_inact_count = "{}\t{}\t{}\n".format(targ, len(target_act_inact_comp_dict[targ][0]), len(target_act_inact_comp_dict[targ][1]))
-        act_inact_count_fl.write(str_act_inact_count)
+        for targ in target_act_inact_comp_dict[split_name]:
+            str_act = "{}_act\t".format(targ) + ",".join(target_act_inact_comp_dict[split_name][targ][0])
+            act_inact_comp_fl.write("{}\n".format(str_act))
 
-    act_inact_count_fl.close()
-    act_inact_comp_fl.close()
+            str_inact = "{}_inact\t".format(targ) + ",".join(target_act_inact_comp_dict[split_name][targ][1])
+            act_inact_comp_fl.write("{}\n".format(str_inact))
+
+            str_act_inact_count = "{}\t{}\t{}\n".format(
+                targ, 
+                len(target_act_inact_comp_dict[split_name][targ][0]), 
+                len(target_act_inact_comp_dict[split_name][targ][1])
+            )
+            act_inact_count_fl.write(str_act_inact_count)
+
+        act_inact_count_fl.close()
+        act_inact_comp_fl.close()
 
 
 def create_act_inact_files_similarity_based_neg_enrichment_threshold(act_inact_fl, blast_sim_fl, sim_threshold):
@@ -363,7 +394,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,targe
     create_act_inact_files_for_targets(activity_data, targetid, "chembl", pchembl_threshold, target_prediction_dataset_path) 
 
     act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, "chembl", pchembl_threshold))
-    
+
     for tar in act_inact_dict:
         
         target_img_path = os.path.join(target_prediction_dataset_path, tar, "imgs")
@@ -372,14 +403,10 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,targe
         act_list, inact_list = act_inact_dict[tar]
         print("len act :" + str(len(act_list)))
         print("len inact :" + str(len(inact_list)))
-        if len(inact_list) >= len(act_list):
-            inact_list = inact_list[:len(act_list)]
-        else:
-            act_list = act_list[:int(len(inact_list) * 1.5)]
+
 
         random.shuffle(act_list)
         random.shuffle(inact_list)
-
 
         act_training_validation_size = int(0.8 * len(act_list))
         act_training_size = int(0.8 * act_training_validation_size)
@@ -401,13 +428,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,targe
         tar_train_val_test_dict["training"] = []
         tar_train_val_test_dict["validation"] = []
         tar_train_val_test_dict["test"] = []
-        
-
-        parser = argparse.ArgumentParser()
-
-    # Usage format:
-    # --dataset_file <dataset_file_path> --max_cores <max_cores> --target_prediction_dataset_path <target_prediction_dataset_path> --protein_name <protein_name>
-
+    
 
         directory = "{}/{}".format(target_prediction_dataset_path,targetid)
 
@@ -464,11 +485,8 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,targe
         smiles_file = last_smiles_file
         
         initialize_dirs(targetid , target_prediction_dataset_path)
-
-        
-
         generate_images(smiles_file , targetid , max_cores , tar_train_val_test_dict,target_prediction_dataset_path)
-        print(tar_train_val_test_dict)
+
         random.shuffle(tar_train_val_test_dict["training"])
         random.shuffle(tar_train_val_test_dict["validation"])
         random.shuffle(tar_train_val_test_dict["test"])
@@ -476,7 +494,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,targe
         with open(os.path.join(target_prediction_dataset_path, tar, 'train_val_test_dict.json'), 'w') as fp:
             json.dump(tar_train_val_test_dict, fp)
        
-def train_val_test_split(smiles_file, target_column_number=1, scaffold_split=False):
+def train_val_test_split(smiles_file, split_ratios=(0.8, 0.1, 0.1), scaffold_split=False):
     """
     Split data into train/val/test sets using either random or scaffold-based splitting
     
@@ -488,7 +506,7 @@ def train_val_test_split(smiles_file, target_column_number=1, scaffold_split=Fal
     Returns:
         Lists of compound IDs for train/val/test splits
     """
-    df = pd.read_csv(smiles_file)
+    df = smiles_file
     df.sample(frac=1, random_state=42).reset_index(drop=True)  # Shuffle with fixed seed
     
     # Get SMILES and compound IDs
@@ -496,38 +514,40 @@ def train_val_test_split(smiles_file, target_column_number=1, scaffold_split=Fal
     compound_ids = df["molecule_chembl_id"].tolist()
     
     if scaffold_split:
+        print("scaffold split")
         # Create MoleculeDatapoints for scaffold splitting
-        molecule_list = []
-        for i, smile in enumerate(smiles):
-            molecule_list.append(chemprop.data.data.MoleculeDatapoint(
-                smiles=[smile],
-                targets=[1], # Dummy target since we just need structure
-                id=compound_ids[i]
-            ))
-        molecule_dataset = chemprop.data.data.MoleculeDataset(molecule_list)
-        
-        # Perform scaffold split
-        train, val, test = chemprop.data.scaffold.scaffold_split(
-            data=molecule_dataset,
-            sizes=(0.8, 0.1, 0.1),
-            seed=42,
-            balanced=True
-        )
-        
-        # Extract compound IDs from split datasets
-        train_ids = [mol.id[0] for mol in train]
-        val_ids = [mol.id[0] for mol in val] 
-        test_ids = [mol.id[0] for mol in test]
+        molecule_list = [Chem.MolFromSmiles(smi) for smi in smiles]
+        train_indices, val_indices, test_indices = make_split_indices(molecule_list, 
+                                                                      split = "scaffold_balanced",
+                                                                      sizes=(split_ratios), seed=42)
+        train_df = df.iloc[train_indices[0]]
+        val_df = df.iloc[val_indices[0]]
+        test_df = df.iloc[test_indices[0]]
+
+        train_ids = train_df["molecule_chembl_id"].tolist()
+        val_ids = val_df["molecule_chembl_id"].tolist()
+        test_ids = test_df["molecule_chembl_id"].tolist()
         
     else:
+        print("random split")
         # Random split
-        n = len(compound_ids)
-        train_size = int(0.8 * n)
-        val_size = int(0.1 * n)
+        n = len(df)
+        train_size = int(n * split_ratios[0])
+        val_size = int(n * split_ratios[1])
         
-        train_ids = compound_ids[:train_size]
-        val_ids = compound_ids[train_size:train_size + val_size]
-        test_ids = compound_ids[train_size + val_size:]
+        # Get random indices for train/val/test
+        indices = list(range(n))
+        random.shuffle(indices)
+        
+        # Split indices into train/val/test
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:train_size + val_size]
+        test_indices = indices[train_size + val_size:]
+        
+        # Get compound IDs for each split
+        train_ids = [compound_ids[i] for i in train_indices]
+        val_ids = [compound_ids[i] for i in val_indices] 
+        test_ids = [compound_ids[i] for i in test_indices]
 
     return train_ids, val_ids, test_ids
 
