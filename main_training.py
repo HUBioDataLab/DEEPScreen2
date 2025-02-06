@@ -53,6 +53,11 @@ parser.add_argument(
     default=100,
     metavar='EPC',
     help='Number of epochs (default: 100)')
+
+parser.add_argument(
+    '--scaffold',
+    action='store_true',  
+    help='The boolean that controls if the dataset will be spilitted by using scaffold splitting')
 parser.add_argument(
     '--en',
     type=str,
@@ -67,10 +72,14 @@ parser.add_argument(
     help='The index of cuda core to be used (default: 0)')
 parser.add_argument(
     '--pchembl_threshold',
-    type=int,
-    default=5.8,
+    type=float,  #
+    default=5.8,   
     metavar='DPT',
     help='The threshold for the number of data points to be used (default: 6)')
+parser.add_argument(
+    '--moleculenet', 
+    action='store_true',  
+    help='The boolean that controls if the dataset comes from moleculenet dataset')
 parser.add_argument(
     '--all_proteins',
     action='store_true',
@@ -110,18 +119,28 @@ parser.add_argument(
 if __name__ == "__main__":
     args = parser.parse_args()
     print(args)
-    
     # Create platform-independent path
     target_training_dataset_path = Path(args.training_dir).resolve()
     # Ensure directory exists
     target_training_dataset_path.mkdir(parents=True, exist_ok=True)
 
     download_target(args)
+
+    #print(type(args.moleculenet))
+    
+    
+    
     create_final_randomized_training_val_test_sets(
-        target_training_dataset_path / args.target_chembl_id / "activity_data.csv",
+        target_training_dataset_path / args.target_chembl_id / args.output_file,
         args.max_cores,
+        args.scaffold,
         args.target_chembl_id,
         target_training_dataset_path,
+        args.moleculenet,
         args.pchembl_threshold)
+    
     train_validation_test_training(args.target_chembl_id, args.model, args.fc1, args.fc2, args.lr, args.bs,
                                    args.dropout, args.epoch, args.en, args.cuda)
+    
+    
+    
