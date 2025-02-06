@@ -77,7 +77,7 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
         img_arrs, labels = torch.tensor(img_arrs).type(torch.FloatTensor).to(device), torch.tensor(labels).to(device)
         total_count += len(comp_ids)
         y_pred = model(img_arrs).to(device)
-        loss = criterion(y_pred.squeeze(), labels)
+        loss = criterion(y_pred, labels)
         total_loss += float(loss.item())
         all_comp_ids.extend(list(comp_ids))
         _, preds = torch.max(y_pred, 1)
@@ -125,6 +125,7 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
         "{}/best_val_test_predictions-{}.txt".format(exp_path,str_arguments), "w")
 
     train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(target_id, batch_size)
+    
     model = None
     if model_name == "CNNModel1":
         model = CNNModel1(fully_layer_1, fully_layer_2, drop_rate).to(device)
@@ -148,8 +149,6 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
         print("Training mode:", model.training)
        
         for i, data in enumerate(train_loader):
-            
-            
             batch_number += 1
             optimizer.zero_grad()
             img_arrs, labels, comp_ids = data
@@ -164,7 +163,7 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
             all_training_probs.extend(y_pred.detach().cpu().numpy())
 
 
-            loss = criterion(y_pred.squeeze(), labels)
+            loss = criterion(y_pred, labels)
             total_training_loss += float(loss.item())
             loss.backward()
             optimizer.step()
