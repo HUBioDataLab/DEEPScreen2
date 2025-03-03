@@ -36,14 +36,20 @@ def get_chemblid_smiles_inchi_dict(smiles_inchi_fl):
 
 
 def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rotations, target_prediction_dataset_path, SIZE=300, rot_size=300):
+    
     mol = Chem.MolFromSmiles(smiles)
+    
     if mol is None:
         print(f"Invalid SMILES: {smiles}")
         return
+    """
     Draw.DrawingOptions.atomLabelFontSize = 55
+    
     Draw.DrawingOptions.dotsPerAngstrom = 100
+    
     Draw.DrawingOptions.bondLineWidth = 1.5
-   
+    """
+    
     base_path = os.path.join(target_prediction_dataset_path, tar_id, "imgs")
     
     if not os.path.exists(base_path):
@@ -88,15 +94,20 @@ def process_smiles(smiles_data):
     rotations = [(0, "_0"), *[(angle, f"_{angle}") for angle in range(10, 360, 10)]]
     local_dict = {test_val_train_situation: []}
     try:
-            
+
         save_comp_imgs_from_smiles(targetid, compound_id, current_smiles, rotations, target_prediction_dataset_path)
 
-        for i in range(0,360,10):
-            local_dict[test_val_train_situation].append([compound_id + "_" + str(i), int(act_inact)])
+        if  os.path.exists(os.path.join(target_prediction_dataset_path, targetid, "imgs","{}_0.png".format(compound_id))):
 
+            for i in range(0,360,10):
+                local_dict[test_val_train_situation].append([compound_id + "_" + str(i), int(act_inact)])
+                #print(local_dict[test_val_train_situation].append([compound_id + "_" + str(i), int(act_inact)]))
+        else:
+            print(compound_id," cannot create image")
     except:
-        
+        print(compound_id , targetid)
         pass
+    
     return local_dict
     
 def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,target_prediction_dataset_path):
@@ -108,12 +119,14 @@ def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,tar
     test_val_train_situations = pd.read_csv(smiles_file)["test_val_train"].tolist()
     smiles_data_list = [(smiles, compound_ids[i], target_prediction_dataset_path, targetid,act_inact_situations[i],test_val_train_situations[i]) for i, smiles in enumerate(smiles_list)]
 
+    
     start_time = time.time()
     
     with ProcessPoolExecutor(max_workers=max_cores) as executor:
         results = list(executor.map(process_smiles, smiles_data_list))
     end_time = time.time()
 
+    print("result" , len(results))
     for result in results:
         for key, value in result.items():
             tar_train_val_test_dict[key].extend(value)
@@ -167,7 +180,7 @@ def get_act_inact_list_for_all_targets(fl):
                         act_inact_dict[chembl_target_id][1] = inact_list
     return act_inact_dict
 
-def create_act_inact_files_for_targets(fl, target_id, chembl_version, pchembl_threshold=6, target_prediction_dataset_path=None):
+def create_act_inact_files_for_targets(fl, target_id, chembl_version, pchembl_threshold,scaffold, target_prediction_dataset_path=None):
     # Create target directory if it doesn't exist
     target_dir = os.path.join(target_prediction_dataset_path, target_id)
     os.makedirs(target_dir, exist_ok=True)
@@ -179,8 +192,7 @@ def create_act_inact_files_for_targets(fl, target_id, chembl_version, pchembl_th
     pre_filt_chembl_df['activity_label'] = (pre_filt_chembl_df['pchembl_value'] >= pchembl_threshold).astype(int)
     
     # Now split the labeled data
-    train_ids, val_ids, test_ids = train_val_test_split(pre_filt_chembl_df, split_ratios=(0.8, 0.1, 0.1), 
-                                                       scaffold_split=True)
+    train_ids, val_ids, test_ids = train_val_test_split(pre_filt_chembl_df,scaffold ,split_ratios=(0.8, 0.1, 0.1))
 
     # Create separate dataframes for train/val/test
     train_df = pre_filt_chembl_df[pre_filt_chembl_df['molecule_chembl_id'].isin(train_ids)]
@@ -294,13 +306,48 @@ def create_act_inact_files_similarity_based_neg_enrichment_threshold(act_inact_f
     act_inact_count_fl.close()
     act_inact_comp_fl.close()
 
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,targetid,target_prediction_dataset_path, pchembl_threshold=6):
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,moleculenet ,pchembl_threshold):
 
-    chemblid_smiles_dict = get_chemblid_smiles_inchi_dict(activity_data) 
     
-    create_act_inact_files_for_targets(activity_data, targetid, "chembl", pchembl_threshold, target_prediction_dataset_path) 
+    
+    if(moleculenet):
 
-    act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, "chembl", pchembl_threshold))
+        pandas_df = pd.read_csv(activity_data)
+
+        pandas_df = pandas_df.head(200) #HERE , you can run the code for preview
+        
+        
+        pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
+        pandas_df = pandas_df[["canonical_smiles", "target"]]
+        
+        #pandas_df["molecule_chembl_id"] = [f"HIV{i+1}" for i in range(len(pandas_df))]
+
+        pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
+
+        act_ids = pandas_df[pandas_df["target"] == 1]["molecule_chembl_id"].tolist()
+        inact_ids = pandas_df[pandas_df["target"] == 0]["molecule_chembl_id"].tolist()
+        act_inact_dict = {targetid: [act_ids, inact_ids]}
+        
+
+        moleculenet_dict = {}
+        for i, row_ in pandas_df.iterrows():
+            cid = row_["molecule_chembl_id"]
+            smi = row_["canonical_smiles"]
+            moleculenet_dict[cid] = ["dummy1", "dummy2", "dummy3", smi]
+        chemblid_smiles_dict = moleculenet_dict
+            
+     
+    else:
+    
+        chemblid_smiles_dict = get_chemblid_smiles_inchi_dict(activity_data) 
+    
+        create_act_inact_files_for_targets(activity_data, targetid, "chembl", pchembl_threshold,scaffold, target_prediction_dataset_path) 
+
+        act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, "chembl", pchembl_threshold))
+
+        #print(act_inact_dict)
+
+    print(len(act_inact_dict))
 
     for tar in act_inact_dict:
         
@@ -391,6 +438,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,targe
 
         smiles_file = last_smiles_file
         
+        print("len smiles file" , len(smiles_file))
         initialize_dirs(targetid , target_prediction_dataset_path)
         generate_images(smiles_file , targetid , max_cores , tar_train_val_test_dict,target_prediction_dataset_path)
 
@@ -401,7 +449,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,targe
         with open(os.path.join(target_prediction_dataset_path, tar, 'train_val_test_dict.json'), 'w') as fp:
             json.dump(tar_train_val_test_dict, fp)
        
-def train_val_test_split(smiles_file, split_ratios=(0.8, 0.1, 0.1), scaffold_split=True):
+def train_val_test_split(smiles_file, scaffold_split,split_ratios=(0.8, 0.1, 0.1)):
     """
     Split data into train/val/test sets using either random or scaffold-based splitting
     
@@ -479,8 +527,10 @@ class DEEPScreenDataset(Dataset):
         img_paths = [os.path.join(self.training_dataset_path, "imgs", "{}.png".format(comp_id))]
 
         
-        img_path = random.choice([path for path in img_paths if os.path.exists(path)])
 
+        img_path = random.choice([path for path in img_paths if os.path.exists(path)])
+        
+            
         if not os.path.exists(img_path):
             raise FileNotFoundError(f"Image not found for compound ID: {comp_id}")
 
