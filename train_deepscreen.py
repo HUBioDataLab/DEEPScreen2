@@ -7,6 +7,8 @@ import warnings
 import numpy as np
 
 import torch.nn as nn
+from torch.optim.lr_scheduler import LinearLR
+
 from models import CNNModel1, ViT
 
 from data_processing import get_train_test_val_data_loaders
@@ -22,19 +24,22 @@ import matplotlib.pyplot as plt
 import cv2
 import shutil
 
+from muon import SingleDeviceMuonWithAuxAdam
+
 warnings.filterwarnings(action='ignore')
 torch.manual_seed(123)
 np.random.seed(123)
 use_gpu = torch.cuda.is_available()
 
+sep = os.sep
 
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split("/")[0]
 
-project_file_path = "{}DEEPScreen{}".format(current_path_beginning, current_path_version)
-training_files_path = "{}/training_files".format(project_file_path)
-result_files_path = "{}/result_files".format(project_file_path)
-trained_models_path = "{}/trained_models".format(project_file_path)
+project_file_path = f"{current_path_beginning}DEEPScreen{current_path_version}"
+training_files_path = f"{project_file_path}{sep}training_files"
+result_files_path = f"{project_file_path}{sep}result_files"
+trained_models_path = f"{project_file_path}{sep}trained_models"
 
 
 
@@ -86,7 +91,7 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
 
     return total_loss, total_count, all_comp_ids, all_labels, all_predictions,all_pred_probs
 
-def train_validation_test_training(target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch, experiment_name, cuda_selection,run_id,model_save):
+def train_validation_test_training(target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch,hidden_size,window_size,att_drop,drop_path_rate,layer_norm_eps,encoder_stride , experiment_name, cuda_selection,run_id,model_save,project_name,sweep=False,scheduler = False,end_learning_rate_factor = None,use_muon=False):
 
     arguments = ["{:.16f}".format(argm).rstrip('0') if type(argm)==float else str(argm) for argm in
                  [target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch, experiment_name]]
@@ -100,19 +105,22 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
     if run_id =="None":
         run_id = None
 
-    wandb.init(project='DeepscreenRuns', id = run_id,name=experiment_name,resume = 'allow', config={
-        "target_id": target_id,
-        "model_name": model_name,
-        "fully_layer_1": fully_layer_1,
-        "fully_layer_2": fully_layer_2,
-        "learning_rate": learning_rate,
-        "batch_size": batch_size,
-        "drop_rate": drop_rate,
-        "n_epoch": n_epoch,
-        "cuda_selection": get_device(cuda_selection)
-    })
+    if not sweep:
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(cuda_selection)
+        wandb.init(project=project_name, id = run_id,name=experiment_name,resume = 'allow', config={
+            "target_id": target_id,
+            "model_name": model_name,
+            "fully_layer_1": fully_layer_1,
+            "fully_layer_2": fully_layer_2,
+            "learning_rate": learning_rate,
+            "batch_size": batch_size,
+            "drop_rate": drop_rate,
+            "n_epoch": n_epoch,
+            "cuda_selection": get_device(cuda_selection)
+        })
+
+
+    #os.environ['CUDA_VISIBLE_DEVICES'] = str(cuda_selection)
     device = get_device(cuda_selection)
     exp_path = os.path.join(result_files_path, "experiments", experiment_name)
 
@@ -133,10 +141,21 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
     if model_name == "CNNModel1":
         model = CNNModel1(fully_layer_1, fully_layer_2, drop_rate).to(device)
     elif model_name == "ViT":
-        model = ViT(num_classes=2, drop_rate=drop_rate).to(device)
+        model = ViT(window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,2).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
+    if use_muon and model_name=="ViT":
+        hidden_weights = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim >= 2]
+        hidden_gains_biases = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim < 2]
+        nonhidden_params = [*model.vit.swinv2.embeddings.parameters(), *model.vit.classifier.parameters(),*model.vit.swinv2.layernorm.parameters()]
+        param_groups = [
+            dict(params=hidden_weights, use_muon=True,
+                lr=0.00015),
+            dict(params=hidden_gains_biases+nonhidden_params, use_muon=False,
+                lr=learning_rate, betas=(0.9, 0.95),),
+        ]
+        optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     
     if model_save!="None":
         checkpoint = torch.load(model_save)
@@ -147,7 +166,14 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
     else:
         start_epoch = 0
         start_step = 0
-        
+    
+    if scheduler:
+        if not end_learning_rate_factor:
+            end_learning_rate_factor = 0.2
+
+        scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=end_learning_rate_factor, total_iters=n_epoch)
+            
+
     criterion = nn.CrossEntropyLoss()
     optimizer.zero_grad()
 
@@ -188,11 +214,15 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
             loss.backward()
             optimizer.step()
 
+           
             # ✅ Wandb log at every step
             wandb.log({"Loss/train_step": loss.item(), "step": global_step})
 
             global_step += 1  # Increment global step
-            
+
+        if scheduler:
+            scheduler.step()
+ 
         print("Epoch {} training loss:".format(epoch), total_training_loss)
         
         wandb.log({"Loss/train": total_training_loss, "epoch": epoch})

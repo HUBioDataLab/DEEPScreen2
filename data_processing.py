@@ -329,10 +329,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
     
     if(moleculenet):
 
-        pandas_df = pd.read_csv(activity_data)
-
-        pandas_df = pandas_df.head(200) #HERE , you can run the code for preview
-        
+        pandas_df = pd.read_csv(activity_data)        
         
         pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
         pandas_df = pandas_df[["canonical_smiles", "target"]]
