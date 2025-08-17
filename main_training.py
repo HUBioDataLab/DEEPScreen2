@@ -121,6 +121,7 @@ def main():
         args.pchembl_threshold
     )
 
+    
     if args.sweep:
 
         with open("sweep_config.yaml") as f:
@@ -139,32 +140,80 @@ def main():
 
         config_ns = dict_to_namespace(config)
 
+        configs = [
+            {"name": "0rhhyyru", "encoder_stride": 16, "hidden_size": 600, "layer_norm_eps": 1e-6, "learning_rate": 8e-6, "window_size": 9},
+            {"name": "932p7o39", "encoder_stride": 32, "hidden_size": 768, "layer_norm_eps": 1e-4, "learning_rate": 7e-6, "window_size": 7},
+            {"name": "n5l3dop4", "encoder_stride": 32, "hidden_size": 1024, "layer_norm_eps": 1e-7, "learning_rate": 1e-5, "window_size": 7},
+            {"name": "aiqfnngr", "encoder_stride": 32, "hidden_size": 1024, "layer_norm_eps": 1e-5, "learning_rate": 8e-6, "window_size": 7},
+            {"name": "18myoeqw", "encoder_stride": 32, "hidden_size": 1024, "layer_norm_eps": 1e-7, "learning_rate": 8e-6, "window_size": 7},
+            {"name": "vzx7oajk", "encoder_stride": 32, "hidden_size": 768, "layer_norm_eps": 1e-6, "learning_rate": 8e-6, "window_size": 7},
+            {"name": "f4y80o9r", "encoder_stride": 16, "hidden_size": 600, "layer_norm_eps": 1e-5, "learning_rate": 8e-6, "window_size": 9},
+            {"name": "ykzrrhfe", "encoder_stride": 16, "hidden_size": 768, "layer_norm_eps": 1e-5, "learning_rate": 7e-6, "window_size": 7},
+        ]
+
+        dropout_configs = [
+            {
+                "dropout": 0.1,
+                "attention_probs_dropout_prob": 0.0,
+                "drop_path_rate": 0.05
+            },
+            {
+                "dropout": 0.2,
+                "attention_probs_dropout_prob": 0.1,
+                "drop_path_rate": 0.1
+            },
+            {
+                "dropout": 0.3,
+                "attention_probs_dropout_prob": 0.1,
+                "drop_path_rate": 0.1
+            },
+            {
+                "dropout": 0.4,
+                "attention_probs_dropout_prob": 0.15,
+                "drop_path_rate": 0.15
+            },
+            {
+                "dropout": 0.5,
+                "attention_probs_dropout_prob": 0.2,
+                "drop_path_rate": 0.2
+            }
+        ]
+
         params = config_ns.parameters
 
-        train_validation_test_training(
-        args.target_chembl_id,
-        args.model,
-        params.fc1,
-        params.fc2,
-        float(params.learning_rate),
-        params.bs,
-        params.dropout,
-        params.epoch,
-        params.hidden_size,
-        params.window_size,
-        params.attention_probs_dropout_prob,
-        params.drop_path_rate,
-        params.layer_norm_eps,           
-        params.encoder_stride,          
-        args.en,
-        args.cuda,
-        args.run_id,
-        args.model_save,
-        args.project_name,
-        args.sweep,scheduler=args.with_scheduler,
-        end_learning_rate_factor=float(params.end_learning_rate),
-        use_muon = args.muon
-        )
+        
+        for cfg in configs:
+            for dropout_set in dropout_configs:
+
+                for i,v in cfg.items():
+                    setattr(params, i, v)
+                for i,v in dropout_set.items():
+                    setattr(params, i, v)
+
+                train_validation_test_training(
+                args.target_chembl_id,
+                args.model,
+                params.fc1,
+                params.fc2,
+                float(params.learning_rate),
+                params.bs,
+                params.dropout,
+                params.epoch,
+                params.hidden_size,
+                params.window_size,
+                params.attention_probs_dropout_prob,
+                params.drop_path_rate,
+                params.layer_norm_eps,           
+                params.encoder_stride,          
+                cfg["name"],
+                args.cuda,
+                args.run_id,
+                args.model_save,
+                args.project_name,
+                args.sweep,scheduler=args.with_scheduler,
+                end_learning_rate_factor=float(params.end_learning_rate),
+                use_muon = args.muon
+                )
 
 
 if __name__ == "__main__":

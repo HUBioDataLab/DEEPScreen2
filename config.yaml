@@ -1,18 +1,18 @@
 parameters:
 
-  epoch: 40
+  epoch: 80
 
   bs: 32
 
   dropout: 0.2
 
-  hidden_size: 768
+  hidden_size: 600
 
   learning_rate: 8e-6
 
   end_learning_rate: 0.2
 
-  window_size: 7
+  window_size: 9
 
   layer_norm_eps: 1e-6
 
@@ -20,7 +20,7 @@ parameters:
 
   drop_path_rate: 0.1
 
-  encoder_stride: 32
+  encoder_stride: 16
 
   fc1: 128
 
