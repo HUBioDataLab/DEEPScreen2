@@ -1,3 +1,4 @@
+################################# python 3.11
 pandas
 opencv-python
 torch
@@ -8,4 +9,3 @@ chemprop
 matplotlib
 git+https://github.com/KellerJordan/Muon
 wandb
-# python 3.11

@@ -120,7 +120,6 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
         })
 
 
-    #os.environ['CUDA_VISIBLE_DEVICES'] = str(cuda_selection)
     device = get_device(cuda_selection)
     exp_path = os.path.join(result_files_path, "experiments", experiment_name)
 
@@ -155,7 +154,7 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
         ]
         optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
     else:
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
     if model_save!="None":
         checkpoint = torch.load(model_save)

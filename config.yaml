@@ -1,16 +1,6 @@
 parameters:
 
-  epoch: 80
-
-  bs: 32
-
-  dropout: 0.2
-
-  hidden_size: 600
-
-  learning_rate: 8e-6
-
-  end_learning_rate: 0.2
+######################################### Required for ViT
 
   window_size: 9
 
@@ -21,7 +11,21 @@ parameters:
   drop_path_rate: 0.1
 
   encoder_stride: 16
-
-  fc1: 128
+######################################### Required for CNN
+  fc1: 128 #these
 
   fc2: 256
+
+######################################### Required for Both
+
+  epoch: 80
+
+  bs: 32
+
+  dropout: 0.2
+
+  hidden_size: 600
+
+  learning_rate: 8e-6
+
+  end_learning_rate: 0.2 # Percentage to decrease the learning rate at the end of the epochs
