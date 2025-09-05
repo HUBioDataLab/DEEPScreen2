@@ -17,6 +17,9 @@ import multiprocessing
 import csv
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from chemprop.data import make_split_indices
+import requests
+from io import StringIO
+from pathlib import Path
 
 warnings.filterwarnings(action='ignore')
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
@@ -135,6 +138,70 @@ def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,tar
     total_image_count = len(smiles_list) * len([(0, ""), *[(angle, f"_{angle}") for angle in range(10, 360, 10)]])
     print(f"Total images generated: {total_image_count}")
 
+
+def handle_group(g):
+    if len(g) == 1:
+        return g.iloc[0]
+    elif len(g) == 2:
+        return g.loc[g['pchembl_value'].idxmin()] 
+    else:
+        median_vals = g.median(numeric_only=True)
+        row = g.iloc[0].copy()
+        for col in median_vals.index:
+            row[col] = median_vals[col]
+        return row
+
+    
+def detect_deduplicate_and_save(input_csv):
+
+    df = pd.read_csv(str(input_csv))
+    df_cleaned = df.groupby(
+        ['molecule_chembl_id', 'canonical_smiles'],
+        group_keys=False
+    ).apply(handle_group).reset_index(drop=True)
+
+    base, ext = os.path.splitext(str(input_csv))
+    output_csv = f"{base}_dup_detect{ext}"
+
+    df_cleaned.to_csv(output_csv, index=False)
+    print(f"Deduplicated file saved to {output_csv}")
+
+    input_path = Path(input_csv)
+    detect_csv = str(input_path.with_name(input_path.stem + "_dup_detect.csv"))
+    print("New csv file name: ",output_csv)
+                     
+    return detect_csv
+
+
+
+
+def apply_subsampling(act_list, inact_list, max_total_samples):
+    """
+    Apply subsampling to maintain 1:1 positive-negative ratio with max total samples.
+    
+    Args:
+        act_list: List of active compound IDs
+        inact_list: List of inactive compound IDs
+        max_total_samples: Maximum total number of samples
+        
+    Returns:
+        Tuple of (sampled_act_list, sampled_inact_list)
+    """
+    total_samples = len(act_list) + len(inact_list)
+    
+    if total_samples <= max_total_samples:
+        print(f"Total samples ({total_samples}) <= max_total_samples ({max_total_samples}). No subsampling needed.")
+        return act_list, inact_list
+    
+    samples_per_class = max_total_samples // 2
+    
+    sampled_act_list = random.sample(act_list, min(samples_per_class, len(act_list)))
+    sampled_inact_list = random.sample(inact_list, min(samples_per_class, len(inact_list)))
+    
+    print(f"Subsampling applied: {len(act_list)} -> {len(sampled_act_list)} actives, {len(inact_list)} -> {len(sampled_inact_list)} inactives")
+    
+    return sampled_act_list, sampled_inact_list
+
 def get_uniprot_chembl_sp_id_mapping(chembl_uni_prot_mapping_fl):
     id_mapping_fl = open("{}/{}".format(training_files_path, chembl_uni_prot_mapping_fl))
     lst_id_mapping_fl = id_mapping_fl.read().split("\n")
@@ -167,9 +234,9 @@ def get_act_inact_list_for_all_targets(fl):
     act_inact_dict = dict()
     with open(fl) as f:
         for line in f:
-            if line.strip() != "":  # Satırın boş olmadığından emin ol
+            if line.strip() != "":  
                 parts = line.strip().split("\t")
-                if len(parts) == 2:  # Satırın doğru şekilde ayrıştırıldığından emin ol
+                if len(parts) == 2:  
                     chembl_part, comps = parts
                     chembl_target_id, act_inact = chembl_part.split("_")
                     if act_inact == "act":
@@ -232,6 +299,7 @@ def create_act_inact_files_for_targets(fl, target_id, chembl_version, pchembl_th
         combined_file.write(f"{target_id}_inact\t{','.join(all_inact_rows)}\n")
 
 def create_act_inact_files_similarity_based_neg_enrichment_threshold(act_inact_fl, blast_sim_fl, sim_threshold):
+
     data_point_threshold = 100
     uniprot_chemblid_dict = get_uniprot_chembl_sp_id_mapping("chembl27_uniprot_mapping.txt")
     chemblid_uniprot_dict = get_chembl_uniprot_sp_id_mapping("chembl27_uniprot_mapping.txt")
@@ -306,8 +374,196 @@ def create_act_inact_files_similarity_based_neg_enrichment_threshold(act_inact_f
     act_inact_count_fl.close()
     act_inact_comp_fl.close()
 
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,moleculenet ,pchembl_threshold):
+def get_uniprot_id_from_chembl(chembl_target_id: str) -> str:
+    url = f"https://www.ebi.ac.uk/chembl/api/data/target/{chembl_target_id}.json"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    data = resp.json()
+    for comp in data.get("target_components", []):
+        for xref in comp.get("target_component_xrefs", []):
+            if xref.get("xref_src_db") == "UniProt":
+                return xref.get("xref_id")
+    raise ValueError(f"No UniProt ID found for {chembl_target_id}")
 
+# 2) Fetch FASTA sequence from UniProt REST
+
+def fetch_uniprot_sequence(uniprot_id: str) -> str:
+    url = f"https://rest.uniprot.org/uniprotkb/{uniprot_id}.fasta"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    lines = resp.text.splitlines()
+    seq = ''.join(lines[1:])
+    return seq
+
+# 3) Submit sequence to EBI BLAST REST API and retrieve tabular results
+
+def run_ebi_blast(email,seq: str, program: str = "blastp", database: str = "uniprotkb") -> pd.DataFrame:
+    print("run_ebi_blast started")
+    run_url = "https://www.ebi.ac.uk/Tools/services/rest/ncbiblast/run"
+    params = {
+        'program': program,
+        'database': database,
+        'sequence': seq,
+        'stype': 'protein',
+        'email': email ,  # Your email adress
+        'format': 'tsv'
+    }
+    r = requests.post(run_url, data=params)
+    r.raise_for_status()
+    job_id = r.text.strip()
+
+    # Polling loop
+    status_url = f"https://www.ebi.ac.uk/Tools/services/rest/ncbiblast/status/{job_id}"
+    while True:
+        s = requests.get(status_url).text.strip()
+        if s in ('FINISHED', 'ERROR'):
+            break
+        time.sleep(3)
+
+    if s != 'FINISHED':
+        raise RuntimeError(f"BLAST job {job_id} ended with status {s}")
+
+    # Get the correct output format (TSV!)
+    result_url = f"https://www.ebi.ac.uk/Tools/services/rest/ncbiblast/result/{job_id}/tsv"
+    out = requests.get(result_url)
+    out.raise_for_status()
+
+    df = pd.read_csv(StringIO(out.text), sep='\t')
+
+    print("BLAST result columns:", df.columns)
+    df = df.rename(columns={'Identities(%)': 'identity', 'Accession': 'hit_id'})
+
+    return df
+
+
+# 4) Filter hits >= threshold and extract UniProt IDs
+
+def get_similar_uniprot_ids(df, threshold) -> list:
+    print("get_similar_uniprot_ids started")
+    print("df.columns:", df.columns)
+    hits = df[(df['identity'] >= threshold) & (df['identity'] < 100)]
+    # hit_id may contain full header, extract UniProt accession
+    hits['uniprot_id'] = hits['hit_id'].apply(lambda x: x.split('|')[1] if '|' in x else x)
+    
+    # identity değerine göre azalan sırala
+    hits_sorted = hits.sort_values(by='identity', ascending=False)
+    
+    # Dict oluştur: {uniprot_id: identity}
+    similar_dict = dict(zip(hits_sorted['uniprot_id'], hits_sorted['identity']))
+
+    print(len(similar_dict))
+    
+    return similar_dict
+
+# 5) Map UniProt IDs to ChEMBL target IDs
+
+def get_chembl_from_uniprot(uniprot_id: str) -> list:
+    print("get_chembl_from_uniprot started")
+    url = f"https://www.ebi.ac.uk/chembl/api/data/target.json?target_components.xrefs.xref_id={uniprot_id}"
+    r = requests.get(url)
+    r.raise_for_status()
+    data = r.json().get('targets', [])
+    return [t['target_chembl_id'] for t in data]
+
+# 6) Fetch inactive compounds for a ChEMBL target
+
+def fetch_inactive_compounds(chembl_target_id, pchembl_threshold) -> list:
+    print("fetch_inactive_compounds started")
+    url = "https://www.ebi.ac.uk/chembl/api/data/activity.json"
+    params = {
+        'target_chembl_id': chembl_target_id,
+        'pchembl_value__lt': pchembl_threshold,
+        'limit': 10000
+    }
+    r = requests.get(url, params=params)
+    r.raise_for_status()
+    results = r.json().get('activities', [])
+    return [a['molecule_chembl_id'] for a in results]
+
+def enrich_chemblid_smiles_dict(chemblid_smiles_dict, new_chembl_ids):
+    for chembl_id in new_chembl_ids:
+        if chembl_id not in chemblid_smiles_dict:
+            try:
+                url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{chembl_id}.json"
+                r = requests.get(url)
+                r.raise_for_status()
+                mol_data = r.json()
+                smiles = mol_data.get('molecule_structures', {}).get('canonical_smiles', None)
+                if smiles:
+                    chemblid_smiles_dict[chembl_id] = ["dummy1", "dummy2", "dummy3", smiles]
+                else:
+                    print(f"Warning: smiles not found for {chembl_id}")
+            except Exception as e:
+                print(f"Error fetching smiles for {chembl_id}: {e}")
+    return chemblid_smiles_dict
+
+
+def negative_enrichment_pipeline(chembl_target_id,
+                                 percent_threshold,
+                                 pchembl_threshold,
+                                 original_actives,
+                                 original_inactives,email) -> list:
+    uni_id = get_uniprot_id_from_chembl(chembl_target_id)
+    seq = fetch_uniprot_sequence(uni_id)
+    df = run_ebi_blast(email,seq)
+    similar_unis = get_similar_uniprot_ids(df, percent_threshold)
+    
+    for uniprot_id, identity in similar_unis.items():
+        print(f"UniProt ID: {uniprot_id}, Identity: {identity}")
+
+    enriched_inactives = set()
+    max_to_add = len(original_actives) - len(original_inactives)
+    if max_to_add <= 0:
+        return original_inactives
+    
+    for u in similar_unis:
+        chembl_targets = get_chembl_from_uniprot(u)
+        for ct in chembl_targets:
+            new_inactives = fetch_inactive_compounds(ct, pchembl_threshold)
+            for ni in new_inactives:
+                if ni not in original_actives and ni not in original_inactives and ni not in enriched_inactives:
+                    enriched_inactives.add(ni)
+                
+                    if len(enriched_inactives) >= max_to_add:
+                        break
+            if len(enriched_inactives) >= max_to_add:
+                break
+        if len(enriched_inactives) >= max_to_add:
+            break
+
+    
+    combined_inactives = set(original_inactives) | enriched_inactives
+    return list(combined_inactives)
+
+
+
+
+
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,moleculenet ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,email):
+
+
+    df = pd.read_csv(activity_data)
+    
+    duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
+    
+    if duplicates.empty:
+        print("There is no duplicate rows in activity_data.csv.")
+
+    else:
+
+        print(f"Total number of duplicate rows: {len(duplicates)}")
+        duplicate_ids = duplicates['molecule_chembl_id'].unique()
+        print(duplicate_ids)
+
+        activity_data = detect_deduplicate_and_save(activity_data)
+
+        df = pd.read_csv(activity_data)
+    
+        duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
+    
+        if duplicates.empty:
+            print("Duplicate rows are handled")
+    
     
     
     if(moleculenet):
@@ -316,8 +572,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         
         pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
         pandas_df = pandas_df[["canonical_smiles", "target"]]
-        
-        #pandas_df["molecule_chembl_id"] = [f"HIV{i+1}" for i in range(len(pandas_df))]
 
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
 
@@ -342,8 +596,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
         act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, "chembl", pchembl_threshold))
 
-        #print(act_inact_dict)
-
     print(len(act_inact_dict))
 
     for tar in act_inact_dict:
@@ -352,9 +604,27 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         if not os.path.exists(target_img_path):
             os.makedirs(target_img_path)
         act_list, inact_list = act_inact_dict[tar]
+
+        if negative_enrichment:
+            inact_list = negative_enrichment_pipeline(targetid,similarity_threshold,pchembl_threshold,act_list,inact_list,email)
+
+        chemblid_smiles_dict = enrich_chemblid_smiles_dict(chemblid_smiles_dict, inact_list)
+
+        print("After negative enrichment, length of the act and inact list")
         print("len act :" + str(len(act_list)))
         print("len inact :" + str(len(inact_list)))
 
+        # Apply subsampling if enabled
+        """
+        if subsampling:
+            act_list, inact_list = apply_subsampling(act_list, inact_list, max_total_samples)
+            print(f"After subsampling - len act: {len(act_list)}, len inact: {len(inact_list)}")
+
+        print("After subsampling, length of the act and inact list")
+        print("len act :" + str(len(act_list)))
+        print("len inact :" + str(len(inact_list)))
+        """
+        
 
         random.shuffle(act_list)
         random.shuffle(inact_list)
@@ -519,7 +789,7 @@ class DEEPScreenDataset(Dataset):
     def __getitem__(self, index):
         comp_id = self.compid_list[index]
         
-        # Tüm açılar için görüntüleri okuyun
+        
         #img_paths = [os.path.join(self.training_dataset_path, "imgs", "{}_{}.png".format(comp_id, angle)) for angle in range(0, 360, 10)]
         img_paths = [os.path.join(self.training_dataset_path, "imgs", "{}.png".format(comp_id))]
 
