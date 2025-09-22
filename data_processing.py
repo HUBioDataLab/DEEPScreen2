@@ -17,6 +17,7 @@ from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from chemprop.data import make_split_indices
 import requests
 from io import StringIO
+from pathlib import Path
 
 warnings.filterwarnings(action='ignore')
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
@@ -143,6 +144,43 @@ def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,tar
     print(f"Time taken for all: {end_time - start_time}")
     total_image_count = len(smiles_list) * len([(0, ""), *[(angle, f"_{angle}") for angle in range(10, 360, 10)]])
     print(f"Total images generated: {total_image_count}")
+
+
+def handle_group(g):
+    if len(g) == 1:
+        return g.iloc[0]
+    elif len(g) == 2:
+        return g.loc[g['pchembl_value'].idxmin()] 
+    else:
+        median_vals = g.median(numeric_only=True)
+        row = g.iloc[0].copy()
+        for col in median_vals.index:
+            row[col] = median_vals[col]
+        return row
+
+    
+def detect_deduplicate_and_save(input_csv):
+
+    df = pd.read_csv(str(input_csv))
+    df_cleaned = df.groupby(
+        ['molecule_chembl_id', 'canonical_smiles'],
+        group_keys=False
+    ).apply(handle_group).reset_index(drop=True)
+
+    base, ext = os.path.splitext(str(input_csv))
+    output_csv = f"{base}_dup_detect{ext}"
+
+    df_cleaned.to_csv(output_csv, index=False)
+    print(f"Deduplicated file saved to {output_csv}")
+
+    input_path = Path(input_csv)
+    detect_csv = str(input_path.with_name(input_path.stem + "_dup_detect.csv"))
+    print("New csv file name: ",output_csv)
+                     
+    return detect_csv
+
+
+
 
 def apply_subsampling(act_list, inact_list, max_total_samples):
     """
@@ -410,10 +448,19 @@ def run_ebi_blast(email,seq: str, program: str = "blastp", database: str = "unip
 def get_similar_uniprot_ids(df, threshold) -> list:
     print("get_similar_uniprot_ids started")
     print("df.columns:", df.columns)
-    hits = df[df['identity'] >= threshold]
+    hits = df[(df['identity'] >= threshold) & (df['identity'] < 100)]
     # hit_id may contain full header, extract UniProt accession
-    ids = hits['hit_id'].apply(lambda x: x.split('|')[1] if '|' in x else x)
-    return ids.unique().tolist()
+    hits['uniprot_id'] = hits['hit_id'].apply(lambda x: x.split('|')[1] if '|' in x else x)
+    
+    # identity değerine göre azalan sırala
+    hits_sorted = hits.sort_values(by='identity', ascending=False)
+    
+    # Dict oluştur: {uniprot_id: identity}
+    similar_dict = dict(zip(hits_sorted['uniprot_id'], hits_sorted['identity']))
+
+    print(len(similar_dict))
+    
+    return similar_dict
 
 # 5) Map UniProt IDs to ChEMBL target IDs
 
@@ -467,13 +514,15 @@ def negative_enrichment_pipeline(chembl_target_id,
     seq = fetch_uniprot_sequence(uni_id)
     df = run_ebi_blast(email,seq)
     similar_unis = get_similar_uniprot_ids(df, percent_threshold)
-    similar_unis = [u for u in similar_unis if u != uni_id]
+    
+    for uniprot_id, identity in similar_unis.items():
+        print(f"UniProt ID: {uniprot_id}, Identity: {identity}")
 
     enriched_inactives = set()
     max_to_add = len(original_actives) - len(original_inactives)
     if max_to_add <= 0:
         return original_inactives
-    numberOf = 0
+    
     for u in similar_unis:
         chembl_targets = get_chembl_from_uniprot(u)
         for ct in chembl_targets:
@@ -481,8 +530,7 @@ def negative_enrichment_pipeline(chembl_target_id,
             for ni in new_inactives:
                 if ni not in original_actives and ni not in original_inactives and ni not in enriched_inactives:
                     enriched_inactives.add(ni)
-                    print(numberOf)
-                    numberOf = numberOf + 1
+                
                     if len(enriched_inactives) >= max_to_add:
                         break
             if len(enriched_inactives) >= max_to_add:
@@ -495,7 +543,35 @@ def negative_enrichment_pipeline(chembl_target_id,
     return list(combined_inactives)
 
 
+
+
+
 def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,moleculenet ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,email):
+
+
+    df = pd.read_csv(activity_data)
+    
+    duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
+    
+    if duplicates.empty:
+        print("There is no duplicate rows in activity_data.csv.")
+
+    else:
+
+        print(f"Total number of duplicate rows: {len(duplicates)}")
+        duplicate_ids = duplicates['molecule_chembl_id'].unique()
+        print(duplicate_ids)
+
+        activity_data = detect_deduplicate_and_save(activity_data)
+
+        df = pd.read_csv(activity_data)
+    
+        duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
+    
+        if duplicates.empty:
+            print("Duplicate rows are handled")
+    
+    
     
     if(moleculenet):
 
@@ -503,8 +579,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         
         pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
         pandas_df = pandas_df[["canonical_smiles", "target"]]
-        
-        #pandas_df["molecule_chembl_id"] = [f"HIV{i+1}" for i in range(len(pandas_df))]
 
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
 
@@ -529,8 +603,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
         act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, "chembl", pchembl_threshold))
 
-        #print(act_inact_dict)
-
     print(len(act_inact_dict))
 
     for tar in act_inact_dict:
@@ -540,20 +612,27 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             os.makedirs(target_img_path)
         act_list, inact_list = act_inact_dict[tar]
 
-
         if negative_enrichment:
             inact_list = negative_enrichment_pipeline(targetid,similarity_threshold,pchembl_threshold,act_list,inact_list,email)
 
         chemblid_smiles_dict = enrich_chemblid_smiles_dict(chemblid_smiles_dict, inact_list)
 
+        print("After negative enrichment, length of the act and inact list")
+        print("len act :" + str(len(act_list)))
+        print("len inact :" + str(len(inact_list)))
 
         # Apply subsampling if enabled
-        
+        """
         if subsampling:
             act_list, inact_list = apply_subsampling(act_list, inact_list, max_total_samples)
             print(f"After subsampling - len act: {len(act_list)}, len inact: {len(inact_list)}")
 
-       
+        print("After subsampling, length of the act and inact list")
+        print("len act :" + str(len(act_list)))
+        print("len inact :" + str(len(inact_list)))
+        """
+        
+
         random.shuffle(act_list)
         random.shuffle(inact_list)
 
@@ -717,6 +796,7 @@ class DEEPScreenDataset(Dataset):
     def __getitem__(self, index):
         comp_id = self.compid_list[index]
         
+        # Tüm açılar için görüntüleri okuyun
         #img_paths = [os.path.join(self.training_dataset_path, "imgs", "{}_{}.png".format(comp_id, angle)) for angle in range(0, 360, 10)]
         img_paths = [os.path.join(self.training_dataset_path, "imgs", "{}.png".format(comp_id))]        
 

@@ -102,6 +102,11 @@ parser.add_argument(
     metavar='MAX_CORES',
     help='Maximum number of CPU cores to use (default: 10)')
 parser.add_argument(
+    '--max_concurrent',
+    type=int,
+    default=50,
+    help='Maximum number of concurrent requests')
+parser.add_argument(
     '--output_file',
     type=str,
     default='activity_data.csv',
@@ -122,8 +127,8 @@ parser.add_argument(
 parser.add_argument(
     '--similarity_threshold',
     type=float,
-    default=0.5,
-    help='Similarity threshold for negative enrichment (default: 0.5 = 50%%)')
+    default=50,
+    help='Similarity Percentage value')
 parser.add_argument(
     '--negative_enrichment',
     action='store_true',
@@ -160,10 +165,15 @@ if __name__ == "__main__":
 
     download_target(args)
 
+    end_time = time.time()
+
+    print(end_time - start_time , " duration.")
+
     #print(type(args.moleculenet))
     
     
     
+
     create_final_randomized_training_val_test_sets(
         target_training_dataset_path / args.target_chembl_id / args.output_file,
         args.max_cores,
@@ -180,6 +190,11 @@ if __name__ == "__main__":
     
     train_validation_test_training(args.target_chembl_id, args.model, args.fc1, args.fc2, args.lr, args.bs,
                                    args.dropout, args.epoch, args.en, args.cuda)
+
+
+    
+    
+    
     
     
     
