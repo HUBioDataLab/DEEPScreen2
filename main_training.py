@@ -10,7 +10,6 @@ parser.add_argument(
     '--target_chembl_id',
     type=str,
     default="CHEMBL4282",
-    default="CHEMBL4282",
     metavar='TID',
     help='Target ChEMBL ID')
 parser.add_argument(
@@ -22,7 +21,6 @@ parser.add_argument(
 parser.add_argument(
     '--fc1',
     type=int,
-    default=128,
     default=128,
     metavar='FC1',
     help='number of neurons in the first fully-connected layer (default:512)')
@@ -54,15 +52,8 @@ parser.add_argument(
     '--epoch',
     type=int,
     default=2,
-    default=2,
     metavar='EPC',
     help='Number of epochs (default: 100)')
-
-parser.add_argument(
-    '--scaffold',
-    action='store_true',  
-    help='The boolean that controls if the dataset will be spilitted by using scaffold splitting')
-
 parser.add_argument(
     '--scaffold',
     action='store_true',  
@@ -83,14 +74,8 @@ parser.add_argument(
     '--pchembl_threshold',
     type=float,  #
     default=5.8,   
-    type=float,  #
-    default=5.8,   
     metavar='DPT',
     help='The threshold for the number of data points to be used (default: 6)')
-parser.add_argument(
-    '--moleculenet', 
-    action='store_true',  
-    help='The boolean that controls if the dataset comes from moleculenet dataset')
 parser.add_argument(
     '--moleculenet', 
     action='store_true',  
@@ -116,11 +101,6 @@ parser.add_argument(
     default=10,
     metavar='MAX_CORES',
     help='Maximum number of CPU cores to use (default: 10)')
-parser.add_argument(
-    '--max_concurrent',
-    type=int,
-    default=50,
-    help='Maximum number of concurrent requests')
 parser.add_argument(
     '--output_file',
     type=str,
