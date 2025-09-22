@@ -115,6 +115,16 @@ parser.add_argument(
     type=str,
     default='training_files/target_training_datasets',
     help='Path to training datasets directory (default: training_files/target_training_datasets)')
+parser.add_argument(
+    '--max_concurrent', 
+    type=int, 
+    default=50, 
+    help="Maximum number of concurrent requests")
+parser.add_argument(
+    '--batch_size', 
+    type=int, 
+    default=10, 
+    help="Number of targets to process in each batch")
 
 if __name__ == "__main__":
     args = parser.parse_args()
