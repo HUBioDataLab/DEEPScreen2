@@ -102,11 +102,6 @@ parser.add_argument(
     metavar='MAX_CORES',
     help='Maximum number of CPU cores to use (default: 10)')
 parser.add_argument(
-    '--max_concurrent',
-    type=int,
-    default=50,
-    help='Maximum number of concurrent requests')
-parser.add_argument(
     '--output_file',
     type=str,
     default='activity_data.csv',
