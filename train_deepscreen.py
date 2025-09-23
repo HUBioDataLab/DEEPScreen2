@@ -46,7 +46,9 @@ trained_models_path = f"{project_file_path}{sep}trained_models"
 def save_best_model_predictions(experiment_name, epoch, validation_scores_dict, test_scores_dict, model, project_file_path, target_id, str_arguments,
                                 all_test_comp_ids, test_labels, test_predictions):
 
-
+    if not os.path.exists(os.path.join(trained_models_path, experiment_name)):
+            os.makedirs(os.path.join(trained_models_path, experiment_name))
+            
     torch.save(model.state_dict(),
                os.path.join(trained_models_path,experiment_name,target_id+"_best_val-"+str_arguments+"-state_dict.pth"))
     
