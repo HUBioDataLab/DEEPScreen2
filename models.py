@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from operator import itemgetter
+from transformers import Swinv2Config, Swinv2ForImageClassification
 
 class CNNModel1(nn.Module):
     def __init__(self, fully_layer_1, fully_layer_2, drop_rate):
@@ -55,12 +56,24 @@ class CNNModel1(nn.Module):
 # TODO: Create other models
 
 class ViT(nn.Module):
-    def __init__(self, num_classes: int = 2, drop_rate: float = 0.1):
+    def __init__(self, window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,num_classes = 2):
         super(ViT, self).__init__()
-        self.vit = ViT(
-            image_size = 224,
-            
-        )
 
+        configuration = Swinv2Config()
+        configuration.hidden_size = hidden_size
+        configuration.image_size = 300
+        configuration.hidden_dropout_prob = float(drop_rate)
+        configuration.window_size = int(window_size)
+        configuration.attention_probs_dropout_prob  = float(att_drop)
+        configuration.drop_path_rate  = float(drop_path_rate)
+        configuration.layer_norm_eps = float(layer_norm_eps)
+        configuration.encoder_stride = int(encoder_stride)
+
+        configuration.num_labels = num_classes
+
+        model = Swinv2ForImageClassification(configuration)
+        self.vit = model
+  
     def forward(self, x):
-        return self.vit(x)
+        return self.vit(x).logits
+    

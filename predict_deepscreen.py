@@ -2,7 +2,7 @@ import os
 import torch
 import numpy as np
 import pandas as pd
-from models import CNNModel1
+from models import CNNModel1,ViT
 from data_processing import save_comp_imgs_from_smiles, initialize_dirs
 from torch.utils.data import Dataset, DataLoader
 import cv2
@@ -64,7 +64,7 @@ def process_smiles_for_prediction(data):
         return None
     return compound_id
 
-def predict(model_path, smiles_file, target_id, batch_size=32, cuda_selection=0, fc1=512, fc2=256, dropout=0.1):
+def predict(model_name, model_path, smiles_file, target_id, batch_size=32, cuda_selection=0, fc1=512, fc2=256, dropout=0.1):
     # Setup paths
     current_path_beginning = os.getcwd().split("DEEPScreen")[0]
     current_path_version = os.getcwd().split("DEEPScreen")[1].split("/")[0]
@@ -97,13 +97,17 @@ def predict(model_path, smiles_file, target_id, batch_size=32, cuda_selection=0,
     print(f"Using device: {device}")
     
     # Load model
-    model = CNNModel1(fc1, fc2, dropout).to(device)
+    if model_name == "CNNModel1":
+        model = CNNModel1(fc1, fc2, dropout).to(device)
+    elif model_name == "ViT":
+        model = ViT(num_classes=2, drop_rate=dropout).to(device)
+
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     
     # Create dataset and dataloader
     dataset = PredictionDataset(target_id, target_prediction_dataset_path, processed_compounds)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=10)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     
     # Update prediction logic
     predictions = {}

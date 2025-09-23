@@ -1,10 +1,15 @@
-aiohttp
+################################# python 3.11
 pandas
-asyncio
 opencv-python
 torch
-scipy
 scikit-learn
 cairosvg
-rdkit
+transformers
 chemprop
+matplotlib
+git+https://github.com/KellerJordan/Muon
+wandb
+aiohttp
+asyncio
+scipy
+rdkit
