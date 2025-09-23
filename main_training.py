@@ -248,11 +248,6 @@ def main():
         args.model_save,
         args.project_name,
         args.sweep,
-        args.subsampling,
-        args.max_total_samples,
-        args.similarity_threshold,
-        args.negative_enrichment,
-        args.email,
         scheduler=args.with_scheduler,
         end_learning_rate_factor=float(params.end_learning_rate),
         use_muon = args.muon

@@ -12,7 +12,7 @@ parameters:
 
   encoder_stride: 16
 ######################################### Required for CNN
-  fc1: 128 #these
+  fc1: 128
 
   fc2: 256
 
@@ -28,4 +28,4 @@ parameters:
 
   learning_rate: 8e-6
 
-  end_learning_rate: 0.2 # Percentage to decrease the learning rate at the end of the epochs
+  end_learning_rate: 0.2 # Fraction of the learning rate to reach at the end of the epochs

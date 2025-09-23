@@ -44,11 +44,18 @@ trained_models_path = f"{project_file_path}{sep}trained_models"
 
 
 def save_best_model_predictions(experiment_name, epoch, validation_scores_dict, test_scores_dict, model, project_file_path, target_id, str_arguments,
-                                all_test_comp_ids, test_labels, test_predictions):
+                                all_test_comp_ids, test_labels, test_predictions,global_step,optimizer):
 
     if not os.path.exists(os.path.join(trained_models_path, experiment_name)):
             os.makedirs(os.path.join(trained_models_path, experiment_name))
-            
+    
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'steps': global_step,
+            }, os.path.join(trained_models_path,experiment_name, target_id+"_"+ str_arguments+'-checkpoint.pth'))
+
     torch.save(model.state_dict(),
                os.path.join(trained_models_path,experiment_name,target_id+"_best_val-"+str_arguments+"-state_dict.pth"))
     
@@ -300,7 +307,7 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
                 validation_scores_dict, best_test_performance_dict, best_test_predictions, str_test_predictions = save_best_model_predictions(
                     experiment_name, epoch, val_perf_dict, test_perf_dict,
                     model,project_file_path, target_id, str_arguments,
-                    all_test_comp_ids, all_test_labels, test_predictions)
+                    all_test_comp_ids, all_test_labels, test_predictions, global_step,optimizer)
             
         wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
         wandb.log({"Loss/test": total_test_loss, "epoch": epoch})

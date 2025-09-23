@@ -12,7 +12,7 @@ With its advanced image-based representations and flexible usability, DEEPScreen
 - Install required packages:
 
   ```bash
-  pip install requests pandas
+  pip install -r requirements.txt
   ```
 ## Usage
 Run the script:
