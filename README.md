@@ -14,18 +14,30 @@ With its advanced image-based representations and flexible usability, DEEPScreen
   ```bash
   pip install -r requirements.txt
   ```
+
 ## Usage
+
 Run the script:
-   
-   ```bash
-   python main_training.py --target_chembl_id "CHEMBL286" --assay_type "B" --pchembl_threshold 6.0 --output_file "activity_data.csv"
-   ```
+
+```bash
+ python main_training.py --target_chembl_id "CHEMBL286" --assay_type "B" --pchembl_threshold 6.0 --output_file "activity_data.csv" --model ViT --en test_exp --cuda 0 --project_name test_run
+```
 
 This will download and split the data and train the model using it.
+
+If you also have a model save that you want to continue, after configuring the parameters the same as the model,
+you may use
+
+```bash
+--model_save 'your_path'
+```
+
+argument and start your run from a saved model.
 
 # Monkeypox Use-Case Guide
 
 ## File Structure
+
 Before running the model, ensure your files are organized in the following structure:
 
 ```
@@ -49,6 +61,7 @@ DEEPScreen2/
 ## Running the Model
 
 ### Step 1: Training
+
 To train the model with our pre-configured settings, run:
 
 ```bash
@@ -57,28 +70,28 @@ python main_training.py \
     --lr 0.00001 \
     --dropout 0.2 \
     --epoch 100 \
-    --pchembl_threshold 5.8 
+    --pchembl_threshold 5.8
 ```
 
 ### Step 2: Making Predictions (usecase: viral DNA polymerase model)
+
 After training, you can make predictions using:
 
 ```bash
 python predict_deepscreen.py \
     --model_path trained_models/deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64/monkeypox_best_val-monkeypox-CNNModel1-512-256-0.00001-64-0.2-100-deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64-state_dict.pth \
     --smiles_file prediction_files/drugbank_mols.csv \
-    --target_id drugbank 
+    --target_id drugbank
 ```
 
 Note: All necessary files are included in the repository. The files under `DEEPScreen2/monkeypox/` contain the published results.
 
-
 # DrugGEN Use-Case Guide
-
 
 ## Running the Model
 
 ### Step 1: Training
+
 To train the model with our pre-configured settings, run:
 
 ```bash
@@ -91,6 +104,7 @@ python main_training.py \
 ```
 
 ### Step 2: Making Predictions (usecase: DrugGEN molecules)
+
 After training, you can make predictions using:
 
 ```bash

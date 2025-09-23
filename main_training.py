@@ -90,7 +90,6 @@ parser.add_argument(
     type=str, 
     default='DeepscreenRuns', 
     help="Default project name for wandb runs (default: DeepscreenRuns)")
-
 parser.add_argument(
     '--smiles_input_file',
     type=str,
@@ -132,14 +131,21 @@ parser.add_argument(
     '--email',
     type=str,
     help='E-mail adress to access "https://www.ebi.ac.uk/Tools/services/rest/ncbiblast/run')
-parser.add_argument('--model_save', type=str, default="None",
-                    help='Path to previous run if there exists one (default: None)')
-parser.add_argument('--run_id', type=str, default="None",
-                    help='Wandb Run ID if you want to continue a run (default: None)')
-parser.add_argument('--sweep', action='store_true',
-                    help='Sweep mode on or off (default: False)')
+parser.add_argument(
+    '--model_save', 
+    type=str, 
+    default="None",
+    help='Path to previous run if there exists one (default: None)')
+parser.add_argument(
+    '--run_id', 
+    type=str, 
+    default="None",
+    help='Wandb Run ID if you want to continue a run (default: None)')
+parser.add_argument(
+    '--sweep', 
+    action='store_true',
+    help='Sweep mode on or off (default: False)')
 
-args = None
 args = None
 
 def sweep():
