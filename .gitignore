@@ -3,3 +3,4 @@ training_files/target_training_datasets/*
 result_files/experiments/*
 trained_models/*
 wandb
+wander.ipynb

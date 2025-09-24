@@ -13,3 +13,4 @@ aiohttp
 asyncio
 scipy
 rdkit
+PyTDC

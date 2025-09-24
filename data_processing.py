@@ -136,15 +136,11 @@ def process_smiles(smiles_data):
     
 def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,target_prediction_dataset_path):
 
-    
     smiles_list = pd.read_csv(smiles_file)["canonical_smiles"].tolist()
     compound_ids = pd.read_csv(smiles_file)["molecule_chembl_id"].tolist()
     act_inact_situations = pd.read_csv(smiles_file)["act_inact_id"].tolist()
     test_val_train_situations = pd.read_csv(smiles_file)["test_val_train"].tolist()
     smiles_data_list = [(smiles, compound_ids[i], target_prediction_dataset_path, targetid,act_inact_situations[i],test_val_train_situations[i]) for i, smiles in enumerate(smiles_list)]
-
-    
-
     
     start_time = time.time()
     
@@ -559,44 +555,17 @@ def negative_enrichment_pipeline(chembl_target_id,
     return list(combined_inactives)
 
 
-
-
-
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,moleculenet ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,email):
-
-
-    df = pd.read_csv(activity_data)
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,moleculenet,tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,email):
     
-    duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
-    
-    if duplicates.empty:
-        print("There is no duplicate rows in activity_data.csv.")
+    if moleculenet or tdc:
 
-    else:
-
-        print(f"Total number of duplicate rows: {len(duplicates)}")
-        duplicate_ids = duplicates['molecule_chembl_id'].unique()
-        print(duplicate_ids)
-
-        activity_data = detect_deduplicate_and_save(activity_data)
-
-        df = pd.read_csv(activity_data)
-    
-        duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
-    
-        if duplicates.empty:
-            print("Duplicate rows are handled")
-    
-    
-    
-    if(moleculenet):
-
-        pandas_df = pd.read_csv(activity_data)
-
-        pandas_df = pandas_df.head(200) #HERE , you can run the code for preview
+        if moleculenet:
+            pandas_df = pd.read_csv(activity_data)        
+            pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
+        else:
+            pandas_df = pd.read_csv(activity_data,sep="\t")
+            pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
         
-        
-        pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
         pandas_df = pandas_df[["canonical_smiles", "target"]]
 
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
@@ -612,10 +581,31 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             smi = row_["canonical_smiles"]
             moleculenet_dict[cid] = ["dummy1", "dummy2", "dummy3", smi]
         chemblid_smiles_dict = moleculenet_dict
-            
-     
+
     else:
+        
+        df = pd.read_csv(activity_data)
     
+        duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
+        
+        if duplicates.empty:
+            print("There is no duplicate rows in activity_data.csv.")
+
+        else:
+
+            print(f"Total number of duplicate rows: {len(duplicates)}")
+            duplicate_ids = duplicates['molecule_chembl_id'].unique()
+            print(duplicate_ids)
+
+            activity_data = detect_deduplicate_and_save(activity_data)
+
+            df = pd.read_csv(activity_data)
+        
+            duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
+        
+            if duplicates.empty:
+                print("Duplicate rows are handled")
+
         chemblid_smiles_dict = get_chemblid_smiles_inchi_dict(activity_data) 
     
         create_act_inact_files_for_targets(activity_data, targetid, "chembl", pchembl_threshold,scaffold, target_prediction_dataset_path) 

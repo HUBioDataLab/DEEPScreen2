@@ -59,6 +59,10 @@ parser.add_argument(
     action='store_true',  
     help='The boolean that controls if the dataset comes from moleculenet dataset')
 parser.add_argument(
+    '--tdc', 
+    action='store_true',  
+    help='The boolean that controls if the dataset comes from TDC dataset')
+parser.add_argument(
     '--all_proteins',
     action='store_true',
     help="Download data for all protein targets in ChEMBL")
@@ -205,6 +209,7 @@ def main():
         args.target_chembl_id,
         target_training_dataset_path,
         args.moleculenet,
+        args.tdc,
         args.pchembl_threshold,
         args.subsampling,
         args.max_total_samples,
