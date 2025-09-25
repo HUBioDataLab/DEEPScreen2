@@ -11,6 +11,8 @@ parameters:
   drop_path_rate: 0.1
 
   encoder_stride: 32
+
+  hidden_size: 1024
 ######################################### Required for CNN
   fc1: 128
 
@@ -23,8 +25,6 @@ parameters:
   bs: 32
 
   dropout: 0.2
-
-  hidden_size: 1024
 
   learning_rate: 8e-6
 
