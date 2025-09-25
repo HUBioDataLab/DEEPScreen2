@@ -6,6 +6,7 @@ from data_processing import create_final_randomized_training_val_test_sets
 from chembl_downloading import download_target
 import wandb
 import yaml
+import os
 import time
 
 parser = argparse.ArgumentParser(description='DEEPScreen arguments')
@@ -119,7 +120,7 @@ parser.add_argument(
 parser.add_argument(
     '--training_dir',
     type=str,
-    default='training_files\\target_training_datasets',
+    default=f'training_files{os.path.sep}target_training_datasets',
     help='Path to training datasets directory (default: training_files/target_training_datasets)')
 parser.add_argument(
     '--max_concurrent', 
