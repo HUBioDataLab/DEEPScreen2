@@ -621,7 +621,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             os.makedirs(target_img_path)
         act_list, inact_list = act_inact_dict[tar]
 
-        if negative_enrichment:
+        if(negative_enrichment and not moleculenet and not tdc):
             inact_list = negative_enrichment_pipeline(targetid,similarity_threshold,pchembl_threshold,act_list,inact_list,email)
 
         chemblid_smiles_dict = enrich_chemblid_smiles_dict(chemblid_smiles_dict, inact_list)
