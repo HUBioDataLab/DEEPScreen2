@@ -100,7 +100,7 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
 
     return total_loss, total_count, all_comp_ids, all_labels, all_predictions,all_pred_probs
 
-def train_validation_test_training(target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch,hidden_size,window_size,att_drop,drop_path_rate,layer_norm_eps,encoder_stride , experiment_name, cuda_selection,run_id,model_save,project_name,sweep=False,scheduler = False,end_learning_rate_factor = None,use_muon=False):
+def train_validation_test_training(target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch,hidden_size,window_size,att_drop,drop_path_rate,layer_norm_eps,encoder_stride , experiment_name, cuda_selection,run_id,model_save,project_name,early_stopping,patience,warmup,sweep=False,scheduler = False,end_learning_rate_factor = None,use_muon=False):
 
     arguments = ["{:.16f}".format(argm).rstrip('0') if type(argm)==float else str(argm) for argm in
                  [target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch, experiment_name]]
@@ -188,6 +188,10 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
     best_val_mcc_score, best_test_mcc_score = 0.0, 0.0
     best_val_test_performance_dict = dict()
     best_val_test_performance_dict["MCC"] = 0.0
+
+    best_val_roc_auc = 0.0
+
+    early_stopping_counter = 0
 
     global_step = start_step  # Track steps across all epochs
     for e in range(n_epoch):
@@ -300,6 +304,46 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
             for metric, value in test_perf_dict.items():
                 wandb.log({f"Test/{metric}": value, "epoch": epoch})
 
+
+            if early_stopping and epoch >= warmup:
+                print("Val ROC AUC score: ",val_perf_dict["ROC AUC"])
+                print("Best val ROC AUC: ", best_val_roc_auc)
+
+                current_val_roc_auc_2digit = round(val_perf_dict["ROC AUC"], 2)
+                best_val_roc_auc_2digit = round(best_val_roc_auc, 2)
+
+                improved = current_val_roc_auc_2digit > best_val_roc_auc_2digit
+                if improved:
+                    early_stopping_counter = 0
+                    print("Early stopping number : ", early_stopping_counter)
+                else:
+                    early_stopping_counter += 1
+                    print("Early stopping number : ", early_stopping_counter)
+                    if early_stopping_counter >= patience:
+
+
+                        wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
+                        wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
+
+                        
+                        score_list = get_list_of_scores()
+                        for scr in score_list:
+                            best_val_test_result_fl.write("Test {}:\t{}\n".format(scr, best_test_performance_dict[scr]))
+                        best_val_test_prediction_fl.write(best_test_predictions)
+
+                        best_val_test_result_fl.close()
+                        best_val_test_prediction_fl.close()
+
+
+                        print(f"Early stopping triggered at epoch {epoch}")
+                        break
+
+
+            if val_perf_dict["ROC AUC"] > best_val_roc_auc:
+
+                best_val_roc_auc = val_perf_dict["ROC AUC"]
+
+
             if val_perf_dict["MCC"] > best_val_mcc_score:
                 best_val_mcc_score = val_perf_dict["MCC"]
                 best_test_mcc_score = test_perf_dict["MCC"]
@@ -325,4 +369,3 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
     
     wandb.finish()
 
-    #generate_images(dataset_file, target_id, target_prediction_dataset_path, max_cores)
