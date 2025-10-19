@@ -124,7 +124,7 @@ def process_smiles(smiles_data):
 
             for i in range(0,360,10):
                 local_dict[test_val_train_situation].append([compound_id + "_" + str(i), int(act_inact)])
-                #print(local_dict[test_val_train_situation].append([compound_id + "_" + str(i), int(act_inact)]))
+           
         else:
             print(compound_id," cannot create image")
     except Exception as e:
@@ -464,10 +464,8 @@ def get_similar_uniprot_ids(df, threshold) -> list:
     # hit_id may contain full header, extract UniProt accession
     hits['uniprot_id'] = hits['hit_id'].apply(lambda x: x.split('|')[1] if '|' in x else x)
     
-    # identity değerine göre azalan sırala
     hits_sorted = hits.sort_values(by='identity', ascending=False)
     
-    # Dict oluştur: {uniprot_id: identity}
     similar_dict = dict(zip(hits_sorted['uniprot_id'], hits_sorted['identity']))
 
     print(len(similar_dict))
@@ -500,59 +498,79 @@ def fetch_inactive_compounds(chembl_target_id, pchembl_threshold) -> list:
     return [a['molecule_chembl_id'] for a in results]
 
 def enrich_chemblid_smiles_dict(chemblid_smiles_dict, new_chembl_ids):
+    
+    valid_ids = []
     for chembl_id in new_chembl_ids:
-        if chembl_id not in chemblid_smiles_dict:
-            try:
-                url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{chembl_id}.json"
-                r = requests.get(url)
-                r.raise_for_status()
-                mol_data = r.json()
-                smiles = mol_data.get('molecule_structures', {}).get('canonical_smiles', None)
-                if smiles:
-                    chemblid_smiles_dict[chembl_id] = ["dummy1", "dummy2", "dummy3", smiles]
-                else:
-                    print(f"Warning: smiles not found for {chembl_id}")
-            except Exception as e:
-                print(f"Error fetching smiles for {chembl_id}: {e}")
-    return chemblid_smiles_dict
+        if chembl_id in chemblid_smiles_dict:
+            valid_ids.append(chembl_id)
+            continue
+        try:
+            url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{chembl_id}.json"
+            r = requests.get(url)
+            r.raise_for_status()
+            mol_data = r.json()
+            smiles = mol_data.get('molecule_structures', {}).get('canonical_smiles', None)
+            if smiles:
+                chemblid_smiles_dict[chembl_id] = ["dummy1", "dummy2", "dummy3", smiles]
+                valid_ids.append(chembl_id)
+            else:
+                print(f"Warning: smiles not found for {chembl_id}")
+        except Exception as e:
+            print(f"Error fetching smiles for {chembl_id}: {e}")
+    return chemblid_smiles_dict, valid_ids
+
+
+
 
 
 def negative_enrichment_pipeline(chembl_target_id,
                                  percent_threshold,
                                  pchembl_threshold,
                                  original_actives,
-                                 original_inactives,email) -> list:
+                                 original_inactives,
+                                 email,
+                                 chemblid_smiles_dict):
+    
     uni_id = get_uniprot_id_from_chembl(chembl_target_id)
     seq = fetch_uniprot_sequence(uni_id)
-    df = run_ebi_blast(email,seq)
+    df = run_ebi_blast(email, seq)
     similar_unis = get_similar_uniprot_ids(df, percent_threshold)
-    
+    sorted_unis = sorted(similar_unis.items(), key=lambda x: x[1], reverse=True)
+
+    print("Number of similar proteins : ",len(sorted_unis))
+
     for uniprot_id, identity in similar_unis.items():
         print(f"UniProt ID: {uniprot_id}, Identity: {identity}")
 
     enriched_inactives = set()
     max_to_add = len(original_actives) - len(original_inactives)
     if max_to_add <= 0:
-        return original_inactives
-    
-    for u in similar_unis:
-        chembl_targets = get_chembl_from_uniprot(u)
+        return original_inactives, chemblid_smiles_dict
+
+    for uniprot_id, identity in sorted_unis:
+
+        print(f"UniProt ID: {uniprot_id}, Identity: {identity}%")
+        chembl_targets = get_chembl_from_uniprot(uniprot_id)
         for ct in chembl_targets:
             new_inactives = fetch_inactive_compounds(ct, pchembl_threshold)
-            for ni in new_inactives:
-                if ni not in original_actives and ni not in original_inactives and ni not in enriched_inactives:
-                    enriched_inactives.add(ni)
+            for candidate in new_inactives:
                 
-                    if len(enriched_inactives) >= max_to_add:
-                        break
+                if len(enriched_inactives) >= max_to_add:
+                    break
+                if candidate in original_actives or candidate in original_inactives or candidate in enriched_inactives:
+                    continue
+                chemblid_smiles_dict, valid_ids = enrich_chemblid_smiles_dict(chemblid_smiles_dict, [candidate])
+                if candidate in valid_ids:
+                    enriched_inactives.add(candidate)
+ 
             if len(enriched_inactives) >= max_to_add:
                 break
         if len(enriched_inactives) >= max_to_add:
             break
 
-    
     combined_inactives = set(original_inactives) | enriched_inactives
-    return list(combined_inactives)
+
+    return list(combined_inactives), chemblid_smiles_dict
 
 
 def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,moleculenet,tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,email):
@@ -621,27 +639,29 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             os.makedirs(target_img_path)
         act_list, inact_list = act_inact_dict[tar]
 
-        if negative_enrichment:
-            inact_list = negative_enrichment_pipeline(targetid,similarity_threshold,pchembl_threshold,act_list,inact_list,email)
 
-        chemblid_smiles_dict = enrich_chemblid_smiles_dict(chemblid_smiles_dict, inact_list)
+        if (negative_enrichment and not moleculenet and not tdc):
 
-        print("After negative enrichment, length of the act and inact list")
-        print("len act :" + str(len(act_list)))
-        print("len inact :" + str(len(inact_list)))
+            print("Before negative enrichment, length of the act and inact list")
+            print("len act :" + str(len(act_list)))
+            print("len inact :" + str(len(inact_list)))
+
+            inact_list,chemblid_smiles_dict = negative_enrichment_pipeline(targetid,similarity_threshold,pchembl_threshold,act_list,inact_list,email,chemblid_smiles_dict)
+
+            print("After negative enrichment, length of the act and inact list")
+            print("len act :" + str(len(act_list)))
+            print("len inact :" + str(len(inact_list)))
+
 
         # Apply subsampling if enabled
-        """
+        
         if subsampling:
             act_list, inact_list = apply_subsampling(act_list, inact_list, max_total_samples)
             print(f"After subsampling - len act: {len(act_list)}, len inact: {len(inact_list)}")
+            print("len act :" + str(len(act_list)))
+            print("len inact :" + str(len(inact_list)))
 
-        print("After subsampling, length of the act and inact list")
-        print("len act :" + str(len(act_list)))
-        print("len inact :" + str(len(inact_list)))
-        """
         
-
         random.shuffle(act_list)
         random.shuffle(inact_list)
 
@@ -710,10 +730,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                 writer = csv.writer(file)
                 writer.writerow([chemblid_smiles_dict[comp_id][3], comp_id, "0","test"])
 
-        #parser.add_argument('--dataset_file', type=str, default="{}/smilesfile.csv".format(directory), help='Path to the dataset file')
-        #parser.add_argument('--max_cores', type=int, default = max_cores, help='Maximum number of cores to use')
-
-        #args = parser.parse_args()
 
         if max_cores > multiprocessing.cpu_count():
             print(f"Warning: Maximum number of cores is {multiprocessing.cpu_count()}. Using maximum available cores.")
@@ -805,8 +821,6 @@ class DEEPScreenDataset(Dataset):
     def __getitem__(self, index):
         comp_id = self.compid_list[index]
         
-        # Tüm açılar için görüntüleri okuyun
-        #img_paths = [os.path.join(self.training_dataset_path, "imgs", "{}_{}.png".format(comp_id, angle)) for angle in range(0, 360, 10)]
         img_paths = [os.path.join(self.training_dataset_path, "imgs", "{}.png".format(comp_id))]        
 
         img_path = random.choice([path for path in img_paths if os.path.exists(path)])      
@@ -842,6 +856,5 @@ def get_train_test_val_data_loaders(target_id, batch_size=32):
 
 def get_training_target_list(chembl_version):
     target_df = pd.read_csv(os.path.join(training_files_path, "{}_training_target_list.txt".format(chembl_version)), index_col=False, header=None)
-    # print(target_df)
-    # print(list(target_df[0]), len(list(target_df[0])))
+    
     return list(target_df[0])
