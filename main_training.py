@@ -151,6 +151,25 @@ parser.add_argument(
     action='store_true',
     help='Sweep mode on or off (default: False)')
 
+parser.add_argument(
+    '--early_stopping',
+    action='store_true',
+    help='Enable early stopping (uses patience, mode, warmup from config.yaml)')
+parser.add_argument(
+    '--patience',
+    type=int,
+    default=10,
+    help='Number of epochs with no improvement after which training will be stopped'
+)
+
+parser.add_argument(
+    '--warmup',
+    type=int,
+    default=20,
+    help='Number of epochs to ignore early stopping at the start of training'
+)
+
+
 args = None
 
 def sweep():
@@ -184,6 +203,9 @@ def sweep():
         args.run_id,
         args.model_save,
         args.project_name,
+        args.early_stopping,
+        args.patience,
+        args.warmup,
         args.sweep
         )
 
@@ -232,6 +254,7 @@ def main():
     
     else:
 
+        
         with open("config.yaml") as f:
             config = yaml.safe_load(f)
 
@@ -239,6 +262,7 @@ def main():
 
         params = config_ns.parameters
 
+        
         train_validation_test_training(
         args.target_chembl_id,
         args.model,
@@ -259,12 +283,15 @@ def main():
         args.run_id,
         args.model_save,
         args.project_name,
+        args.early_stopping,
+        args.patience,
+        args.warmup,
         args.sweep,
         scheduler=args.with_scheduler,
         end_learning_rate_factor=float(params.end_learning_rate),
         use_muon = args.muon
         )
-
+        
 
 
 if __name__ == "__main__":
