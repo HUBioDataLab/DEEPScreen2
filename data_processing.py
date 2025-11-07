@@ -10,13 +10,13 @@ import numpy as np
 import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import Draw
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 import multiprocessing
 import csv
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from chemprop.data import make_split_indices
-
+from tqdm import tqdm
 #####################################################
 random.seed(42)  # Very important for reproducibility
 #####################################################
@@ -43,9 +43,8 @@ def get_chemblid_smiles_inchi_dict(smiles_inchi_fl):
 
 def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rotations, target_prediction_dataset_path, SIZE=300, rot_size=300):
     
-    
+
     mol = Chem.MolFromSmiles(smiles)
-    
     if mol is None:
         print(f"Invalid SMILES: {smiles}")
         return
@@ -74,11 +73,9 @@ def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rotations, target_predic
                 rotations_to_add.append((rot, suffix))
         if len(rotations_to_add) == 0:
             return
-        
         image = Draw.MolToImage(mol, size=(SIZE, SIZE))
         image_array = np.array(image)
         image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
-        
         for rot, suffix in rotations_to_add:
 
             if rot != 0:
@@ -92,7 +89,6 @@ def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rotations, target_predic
                                             borderValue=(255, 255, 255))
             else:
                 full_image = image_bgr
-
             path_to_save = os.path.join(base_path, f"{comp_id}{suffix}.png")
 
             
@@ -116,7 +112,6 @@ def process_smiles(smiles_data):
     rotations = [(0, "_0"), *[(angle, f"_{angle}") for angle in range(10, 360, 10)]]
     local_dict = {test_val_train_situation: []}
     try:
-
 
         save_comp_imgs_from_smiles(targetid, compound_id, current_smiles, rotations, target_prediction_dataset_path)
 
@@ -143,9 +138,14 @@ def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,tar
     smiles_data_list = [(smiles, compound_ids[i], target_prediction_dataset_path, targetid,act_inact_situations[i],test_val_train_situations[i]) for i, smiles in enumerate(smiles_list)]
     
     start_time = time.time()
-    
+
     with ProcessPoolExecutor(max_workers=max_cores) as executor:
-        results = list(executor.map(process_smiles, smiles_data_list))
+        futures = [executor.submit(process_smiles, s) for s in smiles_data_list]
+        
+        results = []
+        for f in tqdm(as_completed(futures), total=len(futures), desc="Processing SMILES"):
+            results.append(f.result())
+
     end_time = time.time()
 
     print("result" , len(results))
