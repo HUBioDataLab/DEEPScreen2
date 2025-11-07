@@ -8,6 +8,7 @@ import multiprocessing
 import time
 from typing import List, Tuple, Optional
 import logging
+from tdc.single_pred import ADME,Tox
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -285,6 +286,13 @@ def read_chembl_ids_from_file(file_path):
 
 async def download_target_async(args):
     """Async version of download_target with concurrent processing"""
+
+    if args.dataset == "tdc_adme":
+        data = ADME(name = args.target_chembl_id,path = os.path.join("training_files","target_training_datasets",args.target_chembl_id))
+        return        
+    elif args.dataset == "tdc_tox":
+        data = Tox(name = args.target_chembl_id,path = os.path.join("training_files","target_training_datasets",args.target_chembl_id))
+        return
     downloader = ChEMBLDownloader(max_concurrent=args.max_concurrent)
     base_dir = os.path.dirname(os.path.abspath(__file__))
     target_chembl_ids = []

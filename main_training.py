@@ -37,6 +37,12 @@ parser.add_argument(
     '--muon', 
     action='store_true',
     help='Use Muon Optimizer(default: False)')
+
+parser.add_argument(
+    '--augment', 
+    type=int,
+    default=10,
+    help='Degrees of rotation for each augmentation (default: 10)')
 parser.add_argument(
     '--en',
     type=str,
@@ -56,13 +62,11 @@ parser.add_argument(
     metavar='DPT',
     help='The threshold for the number of data points to be used (default: 6)')
 parser.add_argument(
-    '--moleculenet', 
-    action='store_true',  
-    help='The boolean that controls if the dataset comes from moleculenet dataset')
-parser.add_argument(
-    '--tdc', 
-    action='store_true',  
-    help='The boolean that controls if the dataset comes from TDC dataset')
+    '--dataset', 
+    type=str,  #
+    default="chembl",   
+    metavar='DATASET',
+    help='Dataset format (chembl,moleculenet,tdc_adme,tdc_tox)')
 parser.add_argument(
     '--all_proteins',
     action='store_true',
@@ -209,13 +213,13 @@ def main():
         args.scaffold,
         args.target_chembl_id,
         target_training_dataset_path,
-        args.moleculenet,
-        args.tdc,
+        args.dataset,
         args.pchembl_threshold,
         args.subsampling,
         args.max_total_samples,
         args.similarity_threshold,
         args.negative_enrichment,
+        args.augment,
         args.email)
 
     
@@ -253,7 +257,10 @@ def main():
         params.attention_probs_dropout_prob,
         params.drop_path_rate,
         params.layer_norm_eps,           
-        params.encoder_stride,          
+        params.encoder_stride,
+        params.embed_dim,
+        params.depths,
+        params.mlp_ratio,          
         args.en,
         args.cuda,
         args.run_id,

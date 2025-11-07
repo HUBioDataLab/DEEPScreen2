@@ -56,7 +56,7 @@ class CNNModel1(nn.Module):
 # TODO: Create other models
 
 class ViT(nn.Module):
-    def __init__(self, window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,num_classes = 2):
+    def __init__(self, window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,embed_dim,depths,mlp_ratio,num_classes = 2):
         super(ViT, self).__init__()
 
         configuration = Swinv2Config()
@@ -68,7 +68,10 @@ class ViT(nn.Module):
         configuration.drop_path_rate  = float(drop_path_rate)
         configuration.layer_norm_eps = float(layer_norm_eps)
         configuration.encoder_stride = int(encoder_stride)
-
+        configuration.embed_dim = int(embed_dim)
+        configuration.depths = depths
+        configuration.mlp_ratio = mlp_ratio
+        
         configuration.num_labels = num_classes
 
         model = Swinv2ForImageClassification(configuration)

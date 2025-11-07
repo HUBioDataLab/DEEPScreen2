@@ -15,6 +15,10 @@ parameters:
    values: [0.1]
   encoder_stride:
     values: [ 16,32]
+  
+  embed_dim : 
+    value : 96
+
 ######################################### Required for CNN
   fc1:
     value: 128

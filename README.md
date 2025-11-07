@@ -115,3 +115,32 @@ python predict_deepscreen.py \
 ```
 
 Note: All necessary files are included in the repository. The files under `DEEPScreen2/druggen/` contain the published results.
+
+# TDC Use-Case Guide
+## File Structure
+
+Before running the model, you don't have to have the dataset in prior, just select the name of the binary classification dataset from the TDC website. The files will be automatically downloaded and prepared for you
+
+## Step 1: Training
+
+To train the model with our pre-configured settings, run:
+
+```bash
+python main_training.py \ 
+        --target_chembl_id Bioavailability_Ma # Bioav dataset from TDC
+        --en "experiment_name" # if you are using wandb 
+        --project_name "project_name" # if you are using wandb
+        --dataset "tdc" 
+        --max_cores 1 
+        --model ViT # or CNN if you erase this flag
+        --muon # if you want to use muon optimizer (only available for ViT for now)
+```
+Step 2: Making Predictions (usecase: TDC benchmark molecules)
+
+After training, you can make predictions using:
+
+python predict_deepscreen.py \
+    --model_path trained_models/deepscreen_scaffold_balanced_lr0.0001_drop0.3_bs128/tdc_best_val-tdc-CNNModel1-512-256-0.0001-128-0.3-50-deepscreen_scaffold_balanced_lr0.0001_drop0.3_bs128-state_dict.pth \
+    --smiles_file prediction_files/tdc_mols.csv \
+    --target_id tdc
+Note: All necessary files are included in the repository. The files under DEEPScreen2/tdc/ contain the published results.

@@ -2,17 +2,23 @@ parameters:
 
 ######################################### Required for ViT
 
-  window_size: 7
+  window_size: 7 # default 7
 
-  layer_norm_eps: 1e-7
+  layer_norm_eps: 1e-5 # default 1e-5 
 
-  attention_probs_dropout_prob: 0.1
+  attention_probs_dropout_prob: 0 # default 0
 
-  drop_path_rate: 0.1
+  drop_path_rate: 0.1 # default 0.1
 
-  encoder_stride: 32
+  encoder_stride: 32 # default 32 
 
-  hidden_size: 1024
+  hidden_size: 768 # default 768 
+
+  embed_dim : 150 # default 96
+ 
+  mlp_ratio : 4 # default 4
+
+  depths : [1,1,3,1] # default 2,2,6,2
 ######################################### Required for CNN
   fc1: 128
 
@@ -26,6 +32,6 @@ parameters:
 
   dropout: 0.2
 
-  learning_rate: 8e-6
+  learning_rate: 1e-5
 
   end_learning_rate: 0.2 # Fraction of the learning rate to reach at the end of the epochs

@@ -100,7 +100,7 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
 
     return total_loss, total_count, all_comp_ids, all_labels, all_predictions,all_pred_probs
 
-def train_validation_test_training(target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch,hidden_size,window_size,att_drop,drop_path_rate,layer_norm_eps,encoder_stride , experiment_name, cuda_selection,run_id,model_save,project_name,sweep=False,scheduler = False,end_learning_rate_factor = None,use_muon=False):
+def train_validation_test_training(target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch,hidden_size,window_size,att_drop,drop_path_rate,layer_norm_eps,encoder_stride, embed_dim,depths,mlp_ratio , experiment_name, cuda_selection,run_id,model_save,project_name,sweep=False,scheduler = False,end_learning_rate_factor = None,use_muon=False):
 
     arguments = ["{:.16f}".format(argm).rstrip('0') if type(argm)==float else str(argm) for argm in
                  [target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch, experiment_name]]
@@ -149,7 +149,7 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
     if model_name == "CNNModel1":
         model = CNNModel1(fully_layer_1, fully_layer_2, drop_rate).to(device)
     elif model_name == "ViT":
-        model = ViT(window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,2).to(device)
+        model = ViT(window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,embed_dim,depths,mlp_ratio,2).to(device)
 
     if use_muon and model_name=="ViT":
         hidden_weights = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim >= 2]
@@ -157,13 +157,13 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
         nonhidden_params = [*model.vit.swinv2.embeddings.parameters(), *model.vit.classifier.parameters(),*model.vit.swinv2.layernorm.parameters()]
         param_groups = [
             dict(params=hidden_weights, use_muon=True,
-                lr=0.00015),
+                lr=0.00025),
             dict(params=hidden_gains_biases+nonhidden_params, use_muon=False,
                 lr=learning_rate, betas=(0.9, 0.95),),
         ]
         optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
     else:
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     
     if model_save!="None":
         checkpoint = torch.load(model_save)

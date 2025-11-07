@@ -1,5 +1,6 @@
 # data_processing.py
 from PIL import Image
+from itertools import repeat
 
 import os
 import cv2
@@ -16,6 +17,7 @@ import multiprocessing
 import csv
 from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from chemprop.data import make_split_indices
+from tdc.single_pred import ADME, Tox
 
 #####################################################
 random.seed(42)  # Very important for reproducibility
@@ -111,9 +113,9 @@ def initialize_dirs(targetid , target_prediction_dataset_path):
     f.write(json_object)
     f.close()
 
-def process_smiles(smiles_data):
+def process_smiles(smiles_data,augmentation_angle):
     current_smiles, compound_id, target_prediction_dataset_path, targetid,act_inact,test_val_train_situation = smiles_data
-    rotations = [(0, "_0"), *[(angle, f"_{angle}") for angle in range(10, 360, 10)]]
+    rotations = [(0, "_0"), *[(angle, f"_{angle}") for angle in range(augmentation_angle, 360, augmentation_angle)]]
     local_dict = {test_val_train_situation: []}
     try:
 
@@ -122,7 +124,7 @@ def process_smiles(smiles_data):
 
         if  os.path.exists(os.path.join(target_prediction_dataset_path, targetid, "imgs","{}_0.png".format(compound_id))):
 
-            for i in range(0,360,10):
+            for i in range(0,360,augmentation_angle):
                 local_dict[test_val_train_situation].append([compound_id + "_" + str(i), int(act_inact)])
                 #print(local_dict[test_val_train_situation].append([compound_id + "_" + str(i), int(act_inact)]))
         else:
@@ -134,7 +136,7 @@ def process_smiles(smiles_data):
         
     return local_dict
     
-def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,target_prediction_dataset_path):
+def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,target_prediction_dataset_path,augmentation_angle):
 
     smiles_list = pd.read_csv(smiles_file)["canonical_smiles"].tolist()
     compound_ids = pd.read_csv(smiles_file)["molecule_chembl_id"].tolist()
@@ -145,7 +147,7 @@ def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,tar
     start_time = time.time()
     
     with ProcessPoolExecutor(max_workers=max_cores) as executor:
-        results = list(executor.map(process_smiles, smiles_data_list))
+        results = list(executor.map(process_smiles, smiles_data_list,  repeat(augmentation_angle)))
     end_time = time.time()
 
     print("result" , len(results))
@@ -154,7 +156,7 @@ def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,tar
             tar_train_val_test_dict[key].extend(value)
 
     print(f"Time taken for all: {end_time - start_time}")
-    total_image_count = len(smiles_list) * len([(0, ""), *[(angle, f"_{angle}") for angle in range(10, 360, 10)]])
+    total_image_count = len(smiles_list) * len([(0, ""), *[(angle, f"_{angle}") for angle in range(augmentation_angle, 360, augmentation_angle)]])
     print(f"Total images generated: {total_image_count}")
 
 
@@ -555,18 +557,31 @@ def negative_enrichment_pipeline(chembl_target_id,
     return list(combined_inactives)
 
 
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,moleculenet,tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,email):
-    
-    if moleculenet or tdc:
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email):
+    """
+    split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
+    """
+    if dataset == "moleculenet" or dataset =="tdc_adme" or dataset == "tdc_tox":
 
-        if moleculenet:
+        if dataset == "moleculenet":
             pandas_df = pd.read_csv(activity_data)        
             pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
+            pandas_df = pandas_df[["canonical_smiles", "target"]]
+
         else:
-            pandas_df = pd.read_csv(activity_data,sep="\t")
+            if dataset == "tdc_adme":
+                data = ADME(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
+            if dataset == "tdc_tox":
+                data = Tox(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
+
+            split = data.get_split()
+
+            pandas_df = pd.concat([split["train"],split["valid"],split["test"]])
+            activity_data = pandas_df
+
             pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
-        
-        pandas_df = pandas_df[["canonical_smiles", "target"]]
+            pandas_df = pandas_df[["Drug_ID","canonical_smiles", "target"]].copy()
+
 
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
 
@@ -574,6 +589,21 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         inact_ids = pandas_df[pandas_df["target"] == 0]["molecule_chembl_id"].tolist()
         act_inact_dict = {targetid: [act_ids, inact_ids]}
         
+        tdc_split_dict = {}
+
+        if dataset != "moleculenet": # Creating splits given by tdc
+            
+            for m in pandas_df.itertuples(index=False):
+                m_drug_id = m.Drug_ID
+                if(split["train"]["Drug_ID"] == m_drug_id).any():
+                    train_test_val_situation = "train"
+                elif (split["valid"]["Drug_ID"] == m_drug_id).any():
+                    train_test_val_situation = "valid"
+                else:
+                    train_test_val_situation = "test"
+
+                act_or_inact = "act" if m.target == 1 else "inact"
+                tdc_split_dict[m.molecule_chembl_id] = (train_test_val_situation, act_or_inact)
 
         moleculenet_dict = {}
         for i, row_ in pandas_df.iterrows():
@@ -583,7 +613,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         chemblid_smiles_dict = moleculenet_dict
 
     else:
-        
         df = pd.read_csv(activity_data)
     
         duplicates = df[df.duplicated(subset=['molecule_chembl_id','canonical_smiles'], keep=False)]
@@ -640,25 +669,49 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         print("len act :" + str(len(act_list)))
         print("len inact :" + str(len(inact_list)))
         """
+
+        if not (dataset == "tdc_adme" or dataset == "tdc_tox"): # If the dataset is from TDC, then the splits are already provided and molecules should be put accordingly.
+            random.shuffle(act_list)
+            random.shuffle(inact_list)
+
+            act_training_validation_size = int(0.8 * len(act_list))
+            act_training_size = int(0.8 * act_training_validation_size)
+            act_val_size = act_training_validation_size - act_training_size
+            training_act_comp_id_list = act_list[:act_training_size]
+            val_act_comp_id_list = act_list[act_training_size:act_training_size+act_val_size]
+            test_act_comp_id_list = act_list[act_training_size+act_val_size:]
+
+            inact_training_validation_size = int(0.8 * len(inact_list))
+            inact_training_size = int(0.8 * inact_training_validation_size)
+            inact_val_size = inact_training_validation_size - inact_training_size
+            training_inact_comp_id_list = inact_list[:inact_training_size]
+            val_inact_comp_id_list = inact_list[inact_training_size:inact_training_size+inact_val_size]
+            test_inact_comp_id_list = inact_list[inact_training_size+inact_val_size:]
+        else:
+
+            training_act_comp_id_list = []
+            val_act_comp_id_list = []
+            test_act_comp_id_list = []
+            
+            training_inact_comp_id_list = []
+            val_inact_comp_id_list = []
+            test_inact_comp_id_list = []
+
+            for molecule, (split, act_or_inact) in tdc_split_dict.items():
+
+                if split == "train" and act_or_inact == "act":
+                    training_act_comp_id_list.append(molecule)
+                elif split == "train" and act_or_inact == "inact":
+                    training_inact_comp_id_list.append(molecule)
+                elif split == "valid" and act_or_inact == "act":
+                    val_act_comp_id_list.append(molecule)
+                elif split == "valid" and act_or_inact == "inact":
+                    val_inact_comp_id_list.append(molecule)
+                elif split == "test" and act_or_inact == "act":
+                    test_act_comp_id_list.append(molecule)
+                elif split == "test" and act_or_inact == "inact":
+                    test_inact_comp_id_list.append(molecule)
         
-
-        random.shuffle(act_list)
-        random.shuffle(inact_list)
-
-        act_training_validation_size = int(0.8 * len(act_list))
-        act_training_size = int(0.8 * act_training_validation_size)
-        act_val_size = act_training_validation_size - act_training_size
-        training_act_comp_id_list = act_list[:act_training_size]
-        val_act_comp_id_list = act_list[act_training_size:act_training_size+act_val_size]
-        test_act_comp_id_list = act_list[act_training_size+act_val_size:]
-
-        inact_training_validation_size = int(0.8 * len(inact_list))
-        inact_training_size = int(0.8 * inact_training_validation_size)
-        inact_val_size = inact_training_validation_size - inact_training_size
-        training_inact_comp_id_list = inact_list[:inact_training_size]
-        val_inact_comp_id_list = inact_list[inact_training_size:inact_training_size+inact_val_size]
-        test_inact_comp_id_list = inact_list[inact_training_size+inact_val_size:]
-
         print(tar, "all training act", len(act_list), len(training_act_comp_id_list), len(val_act_comp_id_list), len(test_act_comp_id_list))
         print(tar, "all training inact", len(inact_list), len(training_inact_comp_id_list), len(val_inact_comp_id_list), len(test_inact_comp_id_list))
         tar_train_val_test_dict = dict()
@@ -721,9 +774,8 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
         smiles_file = last_smiles_file
         
-        print("len smiles file" , len(smiles_file))
         initialize_dirs(targetid , target_prediction_dataset_path)
-        generate_images(smiles_file , targetid , max_cores , tar_train_val_test_dict,target_prediction_dataset_path)
+        generate_images(smiles_file , targetid , max_cores , tar_train_val_test_dict,target_prediction_dataset_path, augmentation_angle)
 
         random.shuffle(tar_train_val_test_dict["training"])
         random.shuffle(tar_train_val_test_dict["validation"])
