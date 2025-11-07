@@ -15,3 +15,4 @@ asyncio
 scipy
 rdkit
 PyTDC
+tqdm
