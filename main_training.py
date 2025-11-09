@@ -100,6 +100,11 @@ parser.add_argument(
     default='DeepscreenRuns', 
     help="Default project name for wandb runs (default: DeepscreenRuns)")
 parser.add_argument(
+    '--entity_name', 
+    type=str, 
+    default=None, 
+    help="Wandb entity name (default: None)")
+parser.add_argument(
     '--smiles_input_file',
     type=str,
     help="Path to txt file containing ChEMBL IDs")
@@ -178,7 +183,7 @@ args = None
 
 def sweep():
 
-    wandb.init(project=args.project_name, id=args.run_id, resume='allow')
+    wandb.init(entity = args.entity_name,project=args.project_name, id=args.run_id, resume='allow')
 
     config = wandb.config
     hp_string = "_".join(f"{k}={v}" for k, v in dict(config).items())
@@ -243,7 +248,6 @@ def main():
         args.negative_enrichment,
         args.augment,
         args.email)
-
     
     if args.sweep:
 
@@ -290,6 +294,7 @@ def main():
         args.run_id,
         args.model_save,
         args.project_name,
+        args.entity_name,
         args.early_stopping,
         args.patience,
         args.warmup,

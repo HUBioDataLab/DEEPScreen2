@@ -142,10 +142,13 @@ def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,tar
     start_time = time.time()
 
     with ProcessPoolExecutor(max_workers=max_cores) as executor:
-        futures = [executor.submit(process_smiles, s) for s in smiles_data_list]
+        futures = [
+            executor.submit(process_smiles, s, augmentation_angle)
+            for s in smiles_data_list
+        ]
         
         results = []
-        for f in tqdm(as_completed(futures), total=len(futures), desc="Processing SMILES"):
+        for f in tqdm(as_completed(futures), total=len(futures), desc=f"Processing SMILES (angle={augmentation_angle})"):
             results.append(f.result())
 
     end_time = time.time()

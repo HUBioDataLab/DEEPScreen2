@@ -100,23 +100,35 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
 
     return total_loss, total_count, all_comp_ids, all_labels, all_predictions,all_pred_probs
 
-def train_validation_test_training(target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch,hidden_size,window_size,att_drop,drop_path_rate,layer_norm_eps,encoder_stride, embed_dim,depths,mlp_ratio , experiment_name, cuda_selection,run_id,model_save,project_name,early_stopping,patience,warmup,sweep=False,scheduler = False,end_learning_rate_factor = None,use_muon=False):
+def train_validation_test_training(
+    target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size,
+    drop_rate, n_epoch, hidden_size, window_size, att_drop, drop_path_rate,
+    layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio,
+    experiment_name, cuda_selection, run_id, model_save, project_name, entity,
+    early_stopping, patience, warmup, sweep=False, scheduler=False,
+    end_learning_rate_factor=None, use_muon=False
+):
+    arguments = [
+        "{:.16f}".format(arg).rstrip('0') if isinstance(arg, float) else str(arg)
+        for arg in [target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch, experiment_name]
+    ]
 
-    arguments = ["{:.16f}".format(argm).rstrip('0') if type(argm)==float else str(argm) for argm in
-                 [target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch, experiment_name]]
-
-    best_test_performance_dict = {"Accuracy": 0, "Precision": 0, "Recall": 0, "F1-Score": 0, "MCC": 0, "TP": 0, "TN": 0, "FP": 0, "FN": 0}
+    best_test_performance_dict = {
+        "Accuracy": 0, "Precision": 0, "Recall": 0, "F1-Score": 0,
+        "MCC": 0, "TP": 0, "TN": 0, "FP": 0, "FN": 0
+    }
     best_test_predictions = ""
 
     str_arguments = "-".join(arguments)
     print("Arguments:", str_arguments)
-    
-    if run_id =="None":
+
+    if run_id == "None":
         run_id = None
 
+    # ---- W&B logging section ---- #
     if not sweep:
 
-        wandb.init(project=project_name, id = run_id,name=experiment_name,resume = 'allow', config={
+        wandb_config = {
             "target_id": target_id,
             "model_name": model_name,
             "fully_layer_1": fully_layer_1,
@@ -125,8 +137,38 @@ def train_validation_test_training(target_id, model_name, fully_layer_1, fully_l
             "batch_size": batch_size,
             "drop_rate": drop_rate,
             "n_epoch": n_epoch,
-            "cuda_selection": get_device(cuda_selection)
-        })
+            "hidden_size": hidden_size,
+            "window_size": window_size,
+            "att_drop": att_drop,
+            "drop_path_rate": drop_path_rate,
+            "layer_norm_eps": layer_norm_eps,
+            "encoder_stride": encoder_stride,
+            "embed_dim": embed_dim,
+            "depths": depths,
+            "mlp_ratio": mlp_ratio,
+            "cuda_selection": get_device(cuda_selection),
+            "model_save": model_save,
+            "early_stopping": early_stopping,
+            "patience": patience,
+            "warmup": warmup,
+            "scheduler": scheduler,
+            "end_learning_rate_factor": end_learning_rate_factor,
+            "use_muon": use_muon,
+        }
+
+        wandb_args = {
+            "project": project_name,
+            "id": run_id,
+            "name": experiment_name,
+            "resume": "allow",
+            "config": wandb_config
+        }
+
+        # entity None ise eklemiyoruz (default hesap devreye girer)
+        if entity not in [None, "", "None"]:
+            wandb_args["entity"] = entity
+
+        wandb.init(**wandb_args)
 
 
     device = get_device(cuda_selection)
