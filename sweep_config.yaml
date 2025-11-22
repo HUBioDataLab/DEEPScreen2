@@ -8,7 +8,7 @@ parameters:
   window_size:
     values: [7,9]
   layer_norm_eps:
-    values: [1e-5 , 1e-6]
+    values: [1e-5]
   attention_probs_dropout_prob:
     values: [0]
   drop_path_rate:
@@ -16,14 +16,13 @@ parameters:
   encoder_stride:
     values: [ 16,32]
   hidden_size:
-    values: [600,768]
+    values: [768,1024]
   embed_dim : 
     value : 96
   mlp_ratio : 
     value : 4 # default 4
-
   depths : 
-    value : [1,1,3,1] # default 2,2,6,2
+    value : [2,2,6,2] # default 2,2,6,2
 
   
 
@@ -41,8 +40,8 @@ parameters:
   dropout:
       values : [0.2]
   learning_rate:
-    values: [7e-6,8e-6]
+    values: [1e-5,8e-6]
   end_learning_rate: 
     value : 0.2 # Fraction of the learning rate to reach at the end of the epochs
   muon_lr: 
-    value : 2.5e-4 
+    values : [2.5e-4,3.5e-5] 

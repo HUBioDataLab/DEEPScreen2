@@ -241,14 +241,15 @@ def sweep():
     exp_name = f"{args.en}_sweep_{wandb.run.id}_{hp_string}"
 
     wandb.run.name = exp_name
-    wandb.run.save()
     print("Batch Size:"+ str(config.bs))
+
     train_validation_test_training(
         args.target_id,
         args.model,
         config.fc1,
         config.fc2,
         float(config.learning_rate),
+        config.muon_lr,
         config.bs,
         config.dropout,
         config.epoch,
@@ -257,16 +258,23 @@ def sweep():
         config.attention_probs_dropout_prob,
         config.drop_path_rate,
         config.layer_norm_eps,           
-        config.encoder_stride,          
-        exp_name,
+        config.encoder_stride,
+        config.embed_dim,
+        config.depths,
+        config.mlp_ratio,          
+        args.en,
         args.cuda,
         args.run_id,
         args.model_save,
         args.project_name,
+        args.entity_name,
         args.early_stopping,
         args.patience,
         args.warmup,
-        args.sweep
+        args.sweep,
+        scheduler=args.with_scheduler,
+        end_learning_rate_factor=float(config.end_learning_rate),
+        use_muon = args.muon
         )
 
 def dict_to_namespace(d):
