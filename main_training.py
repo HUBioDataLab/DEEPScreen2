@@ -10,174 +10,225 @@ import os
 import time
 
 parser = argparse.ArgumentParser(description='DEEPScreen arguments')
+# ============================
+# General Experiment Settings
+# ============================
 parser.add_argument(
-    '--target_chembl_id',
+    '--target_id',
     type=str,
     default="CHEMBL4282",
     metavar='TID',
     help='Target ChEMBL ID')
-parser.add_argument(
-    '--model',
-    type=str,
-    default="CNNModel1",
-    metavar='MN',
-    help='model name (default: CNNModel1)')
 
-parser.add_argument(
-    '--scaffold',
-    action='store_true',  
-    help='The boolean that controls if the dataset will be spilitted by using scaffold splitting')
-
-parser.add_argument(
-    '--with_scheduler', 
-    action='store_true',
-    help='Use learning scheduler(default: False)')
-
-parser.add_argument(
-    '--muon', 
-    action='store_true',
-    help='Use Muon Optimizer(default: False)')
-
-parser.add_argument(
-    '--augment', 
-    type=int,
-    default=10,
-    help='Degrees of rotation for each augmentation (default: 10)')
-parser.add_argument(
-    '--en',
-    type=str,
-    default="deepscreen_scaffold_balanced",
-    metavar='EN',
-    help='the name of the experiment (default: my_experiment)')
-parser.add_argument(
-    '--cuda',
-    type=int,
-    default=0,
-    metavar='CORE',
-    help='The index of cuda core to be used (default: 0)')
-parser.add_argument(
-    '--pchembl_threshold',
-    type=float,  #
-    default=5.8,   
-    metavar='DPT',
-    help='The threshold for the number of data points to be used (default: 6)')
 parser.add_argument(
     '--dataset', 
-    type=str,  #
-    default="chembl",   
+    type=str,
+    default="chembl",
     metavar='DATASET',
-    help='Dataset format (chembl,moleculenet,tdc_adme,tdc_tox)')
-parser.add_argument(
-    '--all_proteins',
-    action='store_true',
-    help="Download data for all protein targets in ChEMBL")
-parser.add_argument(
-    '--pchembl_threshold_for_download',
-    type=int,
-    default=0,
-    metavar='DPT',
-    help='The threshold for the number of data points to be used (default: 0)')
+    help='Dataset format (chembl, moleculenet, tdc_adme, tdc_tox)')
+
 parser.add_argument(
     '--assay_type',
     type=str,
     default='B',
     help="Assay type(s) to search for, comma-separated")
+
 parser.add_argument(
-    '--max_cores',
+    '--cuda',
+    type=int,
+    default=0,
+    metavar='CORE',
+    help='CUDA core index to use (default: 0)')
+
+
+# ============================
+# Model & Architecture
+# ============================
+parser.add_argument(
+    '--model',
+    type=str,
+    default="CNNModel1",
+    metavar='MN',
+    help='Model name (default: CNNModel1)')
+
+parser.add_argument(
+    '--model_save', 
+    type=str, 
+    default="None",
+    help='Path to previous run if exists (default: None)')
+
+# ============================
+# Data Processing / Augmentation
+# ============================
+parser.add_argument(
+    '--scaffold',
+    action='store_true',
+    help='Enable scaffold-based splitting')
+
+parser.add_argument(
+    '--augment', 
     type=int,
     default=10,
-    metavar='MAX_CORES',
-    help='Maximum number of CPU cores to use (default: 10)')
+    help='Degrees of rotation for augmentation (default: 10)')
+
+parser.add_argument(
+    '--pchembl_threshold',
+    type=float,
+    default=5.8,
+    metavar='DPT',
+    help='pChEMBL threshold for selecting data points (default: 5.8)')
+
+parser.add_argument(
+    '--similarity_threshold',
+    type=float,
+    default=50,
+    help='Similarity percentage threshold')
+
+parser.add_argument(
+    '--negative_enrichment',
+    action='store_true',
+    help='Enable negative enrichment using similar proteins')
+
+
+# ============================
+# Data Download Options
+# ============================
+parser.add_argument(
+    '--all_proteins',
+    action='store_true',
+    help="Download data for all protein targets in ChEMBL")
+
+parser.add_argument(
+    '--pchembl_threshold_for_download',
+    type=int,
+    default=0,
+    metavar='DPT',
+    help='Min. number of datapoints required for download (default: 0)')
+
 parser.add_argument(
     '--output_file',
     type=str,
     default='activity_data.csv',
     help="Output file to save activity data")
-# Wandb & logging
-parser.add_argument(
-    '--project_name', 
-    type=str, 
-    default='DeepscreenRuns', 
-    help="Default project name for wandb runs (default: DeepscreenRuns)")
-parser.add_argument(
-    '--entity_name', 
-    type=str, 
-    default=None, 
-    help="Wandb entity name (default: None)")
-parser.add_argument(
-    '--smiles_input_file',
-    type=str,
-    help="Path to txt file containing ChEMBL IDs")
-parser.add_argument(
-    '--subsampling',
-    action='store_true',
-    help='Enable subsampling to limit total data points to 3000 with 1:1 positive-negative ratio')
-parser.add_argument(
-    '--max_total_samples',
-    type=int,
-    default=3000,
-    help='Maximum total number of samples when subsampling is enabled (default: 3000)')
-parser.add_argument(
-    '--similarity_threshold',
-    type=float,
-    default=50,
-    help='Similarity Percentage value')
-parser.add_argument(
-    '--negative_enrichment',
-    action='store_true',
-    help='Enable negative enrichment using similar proteins (requires similarity threshold)')
+
 parser.add_argument(
     '--training_dir',
     type=str,
     default=f'training_files{os.path.sep}target_training_datasets',
-    help='Path to training datasets directory (default: training_files/target_training_datasets)')
+    help='Path to training dataset directory')
+
 parser.add_argument(
-    '--max_concurrent', 
-    type=int, 
-    default=50, 
-    help="Maximum number of concurrent requests")
-parser.add_argument(
-    '--batch_size', 
-    type=int, 
-    default=10, 
-    help="Number of targets to process in each batch")
-parser.add_argument(
-    '--email',
+    '--smiles_input_file',
     type=str,
-    help='E-mail adress to access "https://www.ebi.ac.uk/Tools/services/rest/ncbiblast/run')
+    help="Path to txt file containing ChEMBL IDs")
+
+
+# ============================
+# Subsampling Options
+# ============================
 parser.add_argument(
-    '--model_save', 
-    type=str, 
-    default="None",
-    help='Path to previous run if there exists one (default: None)')
-parser.add_argument(
-    '--run_id', 
-    type=str, 
-    default="None",
-    help='Wandb Run ID if you want to continue a run (default: None)')
-parser.add_argument(
-    '--sweep', 
+    '--subsampling',
     action='store_true',
-    help='Sweep mode on or off (default: False)')
+    help='Enable subsampling to reduce dataset to 3000 samples')
+
+parser.add_argument(
+    '--max_total_samples',
+    type=int,
+    default=3000,
+    help='Maximum total samples when subsampling is used (default: 3000)')
+
+
+# ============================
+# Optimization & Scheduling
+# ============================
+parser.add_argument(
+    '--with_scheduler', 
+    action='store_true',
+    help='Use learning rate scheduler')
+
+parser.add_argument(
+    '--muon',
+    action='store_true',
+    help='Use Muon optimizer (default: Adam)')
 
 parser.add_argument(
     '--early_stopping',
     action='store_true',
-    help='Enable early stopping (uses patience, mode, warmup from config.yaml)')
+    help='Enable early stopping')
+
 parser.add_argument(
     '--patience',
     type=int,
     default=10,
-    help='Number of epochs with no improvement after which training will be stopped'
-)
+    help='Early stopping patience (epochs)')
 
 parser.add_argument(
     '--warmup',
     type=int,
     default=20,
-    help='Number of epochs to ignore early stopping at the start of training'
-)
+    help='Epochs to ignore early stopping at the beginning')
 
+
+# ============================
+# Batch & Parallelization
+# ============================
+parser.add_argument(
+    '--max_cores',
+    type=int,
+    default=10,
+    metavar='MAX_CORES',
+    help='Maximum number of CPU cores to use')
+
+parser.add_argument(
+    '--max_concurrent', 
+    type=int, 
+    default=50, 
+    help="Maximum number of concurrent requests")
+
+parser.add_argument(
+    '--batch_size', 
+    type=int, 
+    default=10, 
+    help="Number of targets to process per batch")
+
+
+# ============================
+# Experiment / Logging
+# ============================
+parser.add_argument(
+    '--en',
+    type=str,
+    default="deepscreen_scaffold_balanced",
+    metavar='EN',
+    help='Experiment name')
+
+parser.add_argument(
+    '--project_name', 
+    type=str, 
+    default='DeepscreenRuns', 
+    help="Wandb project name (default: DeepscreenRuns)")
+
+parser.add_argument(
+    '--entity_name', 
+    type=str, 
+    default=None, 
+    help="Wandb entity name")
+
+parser.add_argument(
+    '--run_id', 
+    type=str, 
+    default="None",
+    help='Wandb Run ID to resume training (default: None)')
+
+parser.add_argument(
+    '--sweep', 
+    action='store_true',
+    help='Enable sweep mode')
+
+parser.add_argument(
+    '--email',
+    type=str,
+    help='E-mail for accessing NCBI BLAST web service')
 
 args = None
 
@@ -193,7 +244,7 @@ def sweep():
     wandb.run.save()
     print("Batch Size:"+ str(config.bs))
     train_validation_test_training(
-        args.target_chembl_id,
+        args.target_id,
         args.model,
         config.fc1,
         config.fc2,
@@ -235,10 +286,10 @@ def main():
     download_target(args)
 
     create_final_randomized_training_val_test_sets(
-        target_training_dataset_path / args.target_chembl_id / args.output_file,
+        target_training_dataset_path / args.target_id / args.output_file,
         args.max_cores,
         args.scaffold,
-        args.target_chembl_id,
+        args.target_id,
         target_training_dataset_path,
         args.dataset,
         args.pchembl_threshold,
@@ -272,11 +323,12 @@ def main():
 
         
         train_validation_test_training(
-        args.target_chembl_id,
+        args.target_id,
         args.model,
         params.fc1,
         params.fc2,
         float(params.learning_rate),
+        params.muon_lr,
         params.bs,
         params.dropout,
         params.epoch,

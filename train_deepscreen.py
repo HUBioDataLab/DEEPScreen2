@@ -101,7 +101,7 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
     return total_loss, total_count, all_comp_ids, all_labels, all_predictions,all_pred_probs
 
 def train_validation_test_training(
-    target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size,
+    target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, muon_lr, batch_size,
     drop_rate, n_epoch, hidden_size, window_size, att_drop, drop_path_rate,
     layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio,
     experiment_name, cuda_selection, run_id, model_save, project_name, entity,
@@ -193,16 +193,30 @@ def train_validation_test_training(
     elif model_name == "ViT":
         model = ViT(window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,embed_dim,depths,mlp_ratio,2).to(device)
 
-    if use_muon and model_name=="ViT":
-        hidden_weights = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim >= 2]
-        hidden_gains_biases = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim < 2]
-        nonhidden_params = [*model.vit.swinv2.embeddings.parameters(), *model.vit.classifier.parameters(),*model.vit.swinv2.layernorm.parameters()]
-        param_groups = [
-            dict(params=hidden_weights, use_muon=True,
-                lr=0.00025),
-            dict(params=hidden_gains_biases+nonhidden_params, use_muon=False,
-                lr=learning_rate, betas=(0.9, 0.95),),
-        ]
+    if use_muon: 
+        if model_name=="ViT":
+            hidden_weights = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim >= 2]
+            hidden_gains_biases = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim < 2]
+            nonhidden_params = [*model.vit.swinv2.embeddings.parameters(), *model.vit.classifier.parameters(),*model.vit.swinv2.layernorm.parameters()]
+            param_groups = [
+                dict(params=hidden_weights, use_muon=True,
+                    lr=muon_lr),
+                dict(params=hidden_gains_biases+nonhidden_params, use_muon=False,
+                    lr=learning_rate, betas=(0.9, 0.95),),
+            ]
+        else:
+
+            hidden_weights = [p for p in model.parameters() if p.ndim >= 2]
+            
+            hidden_gains_biases = [p for p in model.parameters() if p.ndim < 2]
+
+            param_groups = [
+                dict(params=hidden_weights, use_muon=True, 
+                     lr=muon_lr), 
+                
+                dict(params=hidden_gains_biases, use_muon=False, 
+                     lr=learning_rate, betas=(0.9, 0.95)),
+            ]
         optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)

@@ -35,3 +35,5 @@ parameters:
   learning_rate: 1e-5
 
   end_learning_rate: 0.2 # Fraction of the learning rate to reach at the end of the epochs
+
+  muon_lr: 2.5e-4 

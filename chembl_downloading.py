@@ -39,10 +39,10 @@ Example commands to run the script:
    python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --assay_type=B --pchembl_threshold_for_download=6.0 --output_file=activity_data.csv
 
 2. Specifying multiple ChEMBL IDs directly in the command:
-   python chembl_downloading.py --target_chembl_id=CHEMBL25,CHEMBL192 --assay_type=B --pchembl_threshold_for_download=6.0 --output_file=activity_data.csv
+   python chembl_downloading.py --target_id=CHEMBL25,CHEMBL192 --assay_type=B --pchembl_threshold_for_download=6.0 --output_file=activity_data.csv
 
 3. Combining a .txt file with additional specified ChEMBL IDs:
-   python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --target_chembl_id=CHEMBL345 --assay_type=B --pchembl_threshold_for_download=6.0 --output_file=activity_data.csv
+   python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --target_id=CHEMBL345 --assay_type=B --pchembl_threshold_for_download=6.0 --output_file=activity_data.csv
 
 4. Specifying a custom output file name:
    python chembl_downloading.py --smiles_input_file=/path/to/chembl_ids.txt --output_file=custom_output.csv
@@ -64,17 +64,17 @@ class ChEMBLDownloader:
         connector = aiohttp.TCPConnector(limit=100, limit_per_host=50)
         return aiohttp.ClientSession(connector=connector, timeout=self.timeout)
 
-    async def fetch_activities_async(self, session: aiohttp.ClientSession, target_chembl_ids: List[str], 
+    async def fetch_activities_async(self, session: aiohttp.ClientSession, target_ids: List[str], 
                                    assay_types: List[str], pchembl_threshold_for_download: float) -> pd.DataFrame:
         """Async version of fetch_activities with concurrent pagination"""
-        logger.info(f"Starting to fetch activities for {len(target_chembl_ids)} targets from ChEMBL...")
+        logger.info(f"Starting to fetch activities for {len(target_ids)} targets from ChEMBL...")
         
         base_url = "https://www.ebi.ac.uk/chembl/api/data/activity.json"
         params = {
-            'target_chembl_id__in': ','.join(target_chembl_ids),
+            'target_id__in': ','.join(target_ids),
             'assay_type__in': ','.join(assay_types),
             'pchembl_value__isnull': 'false',
-            'only': 'molecule_chembl_id,pchembl_value,target_chembl_id,bao_label'
+            'only': 'molecule_chembl_id,pchembl_value,target_id,bao_label'
         }
         
         # First request to get total count and setup pagination
@@ -208,7 +208,7 @@ class ChEMBLDownloader:
         base_url = "https://www.ebi.ac.uk/chembl/api/data/target.json"
         params = {
             'target_type': 'SINGLE PROTEIN',
-            'only': 'target_chembl_id'
+            'only': 'target_id'
         }
         
         async with await self.create_session() as session:
@@ -224,7 +224,7 @@ class ChEMBLDownloader:
                 logger.info("No targets found.")
                 return []
                 
-            targets = [t['target_chembl_id'] for t in data['targets']]
+            targets = [t['target_id'] for t in data['targets']]
             
             # If there are more pages, fetch them concurrently
             if 'page_meta' in data and data['page_meta']['total_count'] > data['page_meta']['limit']:
@@ -266,7 +266,7 @@ class ChEMBLDownloader:
                 async with session.get(url, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
-                        return [t['target_chembl_id'] for t in data.get('targets', [])]
+                        return [t['target_id'] for t in data.get('targets', [])]
                     else:
                         logger.warning(f"Failed to fetch targets page with offset {params.get('offset', 0)}")
                         return []
@@ -288,23 +288,23 @@ async def download_target_async(args):
     """Async version of download_target with concurrent processing"""
 
     if args.dataset == "tdc_adme":
-        data = ADME(name = args.target_chembl_id,path = os.path.join("training_files","target_training_datasets",args.target_chembl_id))
+        data = ADME(name = args.target_id,path = os.path.join("training_files","target_training_datasets",args.target_id))
         return        
     elif args.dataset == "tdc_tox":
-        data = Tox(name = args.target_chembl_id,path = os.path.join("training_files","target_training_datasets",args.target_chembl_id))
+        data = Tox(name = args.target_id,path = os.path.join("training_files","target_training_datasets",args.target_id))
         return
     downloader = ChEMBLDownloader(max_concurrent=args.max_concurrent)
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    target_chembl_ids = []
+    target_ids = []
     
     if args.all_proteins:
-        target_chembl_ids = await downloader.fetch_all_protein_targets_async()
+        target_ids = await downloader.fetch_all_protein_targets_async()
     else:
-        if args.target_chembl_id:
-            target_chembl_ids.extend(args.target_chembl_id.split(','))
+        if args.target_id:
+            target_ids.extend(args.target_id.split(','))
         if args.smiles_input_file:
             file_chembl_ids = read_chembl_ids_from_file(args.smiles_input_file)
-            target_chembl_ids.extend(file_chembl_ids)
+            target_ids.extend(file_chembl_ids)
     
     assay_types = args.assay_type.split(',')
     
@@ -312,9 +312,9 @@ async def download_target_async(args):
     batch_size = args.batch_size
     
     async with await downloader.create_session() as session:
-        for i in range(0, len(target_chembl_ids), batch_size):
-            batch = target_chembl_ids[i:i + batch_size]
-            logger.info(f"Processing batch {i//batch_size + 1}/{(len(target_chembl_ids) + batch_size - 1)//batch_size}")
+        for i in range(0, len(target_ids), batch_size):
+            batch = target_ids[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}/{(len(target_ids) + batch_size - 1)//batch_size}")
             
             # Process batch concurrently
             tasks = []
@@ -370,7 +370,7 @@ def download_target(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download ChEMBL activity data and SMILES (Async Version)")
     parser.add_argument('--all_proteins', action='store_true', help="Download data for all protein targets in ChEMBL")
-    parser.add_argument('--target_chembl_id', type=str, help="Target ChEMBL ID(s) to search for, comma-separated")
+    parser.add_argument('--target_id', type=str, help="Target ChEMBL ID(s) to search for, comma-separated")
     parser.add_argument('--assay_type', type=str, default='B', help="Assay type(s) to search for, comma-separated")
     parser.add_argument('--pchembl_threshold_for_download', type=float, default=0, help="Threshold for pChembl value to determine active/inactive")
     parser.add_argument('--output_file', type=str, default='activity_data.csv', help="Output file to save activity data")

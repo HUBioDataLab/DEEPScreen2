@@ -1,4 +1,4 @@
-molecule_chembl_id,pchembl_value,target_chembl_id,value,canonical_smiles
+molecule_chembl_id,pchembl_value,target_id,value,canonical_smiles
 CHEMBL307152,5.26,CHEMBL4282,5.48,Cn1ccc2ccc3c4[nH]c5c(CCCN[C@H]6CC[C@H](O)CC6)cccc5c4c4c(c3c21)C(=O)NC4=O
 CHEMBL3216643,8.3,CHEMBL4282,5.0,COc1ccc(O)c(C(=O)c2ccc(C(=O)O[C@@H]3CCCNCC3NC(=O)c3ccncc3)cc2)c1F.Cl.Cl
 CHEMBL1204095,6.8,CHEMBL4282,160.0,COc1ccc(O)c(C(=O)c2ccc(/C=C/[C@@H]3CCCNC[C@H]3NC(=O)c3ccncc3)cc2)c1F.Cl

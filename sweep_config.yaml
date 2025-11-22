@@ -15,9 +15,17 @@ parameters:
    values: [0.1]
   encoder_stride:
     values: [ 16,32]
-  
+  hidden_size:
+    values: [600,768]
   embed_dim : 
     value : 96
+  mlp_ratio : 
+    value : 4 # default 4
+
+  depths : 
+    value : [1,1,3,1] # default 2,2,6,2
+
+  
 
 ######################################### Required for CNN
   fc1:
@@ -32,8 +40,9 @@ parameters:
     value : 32
   dropout:
       values : [0.2]
-  hidden_size:
-    values: [600,768]
   learning_rate:
     values: [7e-6,8e-6]
-
+  end_learning_rate: 
+    value : 0.2 # Fraction of the learning rate to reach at the end of the epochs
+  muon_lr: 
+    value : 2.5e-4 

@@ -20,7 +20,7 @@ With its advanced image-based representations and flexible usability, DEEPScreen
 Run the script:
 
 ```bash
- python main_training.py --target_chembl_id "CHEMBL286" --assay_type "B" --pchembl_threshold 6.0 --output_file "activity_data.csv" --model ViT --en test_exp --cuda 0 --project_name test_run
+ python main_training.py --target_id "CHEMBL286" --assay_type "B" --pchembl_threshold 6.0  --model ViT --en test_exp --cuda 0 --project_name test_run
 ```
 
 This will download and split the data and train the model using it.
@@ -66,10 +66,10 @@ To train the model with our pre-configured settings, run:
 
 ```bash
 python main_training.py \
-    --target_chembl_id monkeypox \
-    --lr 0.00001 \
-    --dropout 0.2 \
-    --epoch 100 \
+    --target_id monkeypox \
+    --en experiment_name \
+    --project_name project_name \
+    # (project name and experiment name are optional)
     --pchembl_threshold 5.8
 ```
 
@@ -96,10 +96,10 @@ To train the model with our pre-configured settings, run:
 
 ```bash
 python main_training.py \
-    --target_chembl_id CHEMBL4282 \
-    --lr 0.001 \
-    --dropout 0.3 \
-    --epoch 20 \
+    --target_id CHEMBL4282 \
+    --en experiment_name \
+    --project_name project_name \
+    # (project name and experiment name are optional)
     --pchembl_threshold 6.0
 ```
 
@@ -124,16 +124,21 @@ Note: All necessary files are included in the repository. The files under `DEEPS
 To train the model with our pre-configured settings, run:
 
 ```bash
-python main_training.py \ 
-        --target_chembl_id bace # Bace dataset from MoleculeNet, your folder name
-        --output_file bace.csv # Your file name in the folder
-        --en "experiment_name" # if you are using wandb 
-        --project_name "project_name" # if you are using wandb
-        --dataset "moleculenet" 
-        --max_cores 1 
-        --model ViT # or CNN if you erase this flag
-        --muon # if you want to use muon optimizer (only available for ViT for now)
-        --scaffold # mostly necessary for moleculenet but be sure
+python main_training.py \
+    # Bace dataset from MoleculeNet
+    --target_id bace \
+    # Output filename
+    --output_file bace.csv \
+    --en experiment_name \
+    --project_name project_name \
+    --dataset "moleculenet" \
+    --max_cores 1 \
+    # Use ViT instead of CNN
+    --model ViT \
+    # Use Muon optimizer (for ViT only)
+    --muon \
+    # Scaffold split recommended for MoleculeNet
+    --scaffold
 ```
 Step 2: Making Predictions (usecase: MoleculeNet benchmark molecules)
 
@@ -156,10 +161,10 @@ To train the model with our pre-configured settings, run:
 
 ```bash
 python main_training.py \ 
-        --target_chembl_id Bioavailability_Ma # Bioav dataset from TDC
-        --en "experiment_name" # if you are using wandb 
-        --project_name "project_name" # if you are using wandb
-        --dataset "tdc" 
+        --target_id Bioavailability_Ma # Bioav dataset from TDC
+        --en experiment_name 
+        --project_name project_name
+        --dataset tdc 
         --max_cores 1 
         --model ViT # or CNN if you erase this flag
         --muon # if you want to use muon optimizer (only available for ViT for now)
@@ -167,8 +172,9 @@ python main_training.py \
 Step 2: Making Predictions (usecase: TDC benchmark molecules)
 
 After training, you can make predictions using:
-
+```bash
 python predict_deepscreen.py \
     --model_path trained_models/deepscreen_scaffold_balanced_lr0.0001_drop0.3_bs128/tdc_best_val-tdc-CNNModel1-512-256-0.0001-128-0.3-50-deepscreen_scaffold_balanced_lr0.0001_drop0.3_bs128-state_dict.pth \
     --smiles_file prediction_files/tdc_mols.csv \
     --target_id your_folder_name
+```

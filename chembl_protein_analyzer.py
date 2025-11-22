@@ -156,9 +156,9 @@ class FastChEMBLAnalyzer:
                     break
                 
                 for target in targets:
-                    if target.get('target_chembl_id') and target.get('pref_name'):
+                    if target.get('target_id') and target.get('pref_name'):
                         all_targets.append({
-                            'target_chembl_id': target['target_chembl_id'],
+                            'target_id': target['target_id'],
                             'pref_name': target['pref_name']
                         })
                 
@@ -184,7 +184,7 @@ class FastChEMBLAnalyzer:
         session = self.session_pool.get()
         
         try:
-            target_id = target['target_chembl_id']
+            target_id = target['target_id']
             target_name = target['pref_name']
             
             # Rate limiting
@@ -192,7 +192,7 @@ class FastChEMBLAnalyzer:
             
             url = f"{self.base_url}/activity"
             params = {
-                'target_chembl_id': target_id,
+                'target_id': target_id,
                 'pchembl_value__gte': 6,
                 'format': 'json',
                 'limit': 1
@@ -205,7 +205,7 @@ class FastChEMBLAnalyzer:
             compound_count = data.get('page_meta', {}).get('total_count', 0)
             
             return {
-                'target_chembl_id': target_id,
+                'target_id': target_id,
                 'pref_name': target_name,
                 'active_compound_count': compound_count,
                 'error': False
@@ -213,7 +213,7 @@ class FastChEMBLAnalyzer:
             
         except requests.exceptions.RequestException as e:
             return {
-                'target_chembl_id': target.get('target_chembl_id', 'unknown'),
+                'target_id': target.get('target_id', 'unknown'),
                 'pref_name': target.get('pref_name', 'unknown'),
                 'active_compound_count': None,
                 'error': True,
@@ -265,7 +265,7 @@ class FastChEMBLAnalyzer:
                 completed += 1
                 
                 # Process result
-                target_id = result['target_chembl_id']
+                target_id = result['target_id']
                 compound_count = result['active_compound_count']
                 
                 if not result['error'] and compound_count is not None:
@@ -273,7 +273,7 @@ class FastChEMBLAnalyzer:
                     print(f"[{completed:3d}/{len(sampled_targets)}] {target_id}: {compound_count:,} compounds {status}")
                     
                     protein_data = {
-                        'target_chembl_id': result['target_chembl_id'],
+                        'target_id': result['target_id'],
                         'pref_name': result['pref_name'],
                         'active_compound_count': compound_count,
                         'meets_criteria': compound_count >= min_compounds
@@ -285,7 +285,7 @@ class FastChEMBLAnalyzer:
                 else:
                     print(f"[{completed:3d}/{len(sampled_targets)}] {target_id}: ERROR")
                     protein_data = {
-                        'target_chembl_id': result['target_chembl_id'],
+                        'target_id': result['target_id'],
                         'pref_name': result['pref_name'],
                         'active_compound_count': None,
                         'meets_criteria': False,
@@ -335,7 +335,7 @@ class FastChEMBLAnalyzer:
             print(f"{len(qualifying_proteins)} proteins meet the criteria:\n")
             
             for i, protein in enumerate(qualifying_proteins[:10], 1):  # Show top 10
-                print(f"{i:2d}. {protein['target_chembl_id']} - {protein['active_compound_count']:,} compounds")
+                print(f"{i:2d}. {protein['target_id']} - {protein['active_compound_count']:,} compounds")
                 print(f"    {protein['pref_name'][:80]}{'...' if len(protein['pref_name']) > 80 else ''}")
                 print()
             

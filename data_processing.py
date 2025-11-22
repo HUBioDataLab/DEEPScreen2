@@ -366,8 +366,8 @@ def create_act_inact_files_similarity_based_neg_enrichment_threshold(act_inact_f
             for uniprot_other_target in seq_to_other_seqs_score_dict[uniprot_target_id]:
                 if seq_to_other_seqs_score_dict[uniprot_target_id][uniprot_other_target]>=sim_threshold:
                     try:
-                        other_target_chembl_id = uniprot_chemblid_dict[uniprot_other_target][0]
-                        other_act_lst, other_inact_lst = all_act_inact_dict[other_target_chembl_id]
+                        other_target_id = uniprot_chemblid_dict[uniprot_other_target][0]
+                        other_act_lst, other_inact_lst = all_act_inact_dict[other_target_id]
                         set_non_act_inact = set(other_inact_lst) - set(target_act_list)
                         set_new_inacts = set_non_act_inact - (set(target_inact_list) & set_non_act_inact)
                         target_inact_list.extend(list(set_new_inacts))
@@ -485,7 +485,7 @@ def get_chembl_from_uniprot(uniprot_id: str) -> list:
     r = requests.get(url)
     r.raise_for_status()
     data = r.json().get('targets', [])
-    return [t['target_chembl_id'] for t in data]
+    return [t['target_id'] for t in data]
 
 # 6) Fetch inactive compounds for a ChEMBL target
 
@@ -493,7 +493,7 @@ def fetch_inactive_compounds(chembl_target_id, pchembl_threshold) -> list:
     print("fetch_inactive_compounds started")
     url = "https://www.ebi.ac.uk/chembl/api/data/activity.json"
     params = {
-        'target_chembl_id': chembl_target_id,
+        'target_id': chembl_target_id,
         'pchembl_value__lt': pchembl_threshold,
         'limit': 10000
     }
