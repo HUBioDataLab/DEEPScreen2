@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from operator import itemgetter
 from transformers import Swinv2Config, Swinv2ForImageClassification
+from ultralytics import YOLO
 
 class CNNModel1(nn.Module):
     def __init__(self, fully_layer_1, fully_layer_2, drop_rate):
@@ -80,3 +81,21 @@ class ViT(nn.Module):
     def forward(self, x):
         return self.vit(x).logits
     
+
+class YOLOv11Classifier(nn.Module):
+    def __init__(self, num_classes, model_size):
+        super().__init__()
+        yolo = YOLO(f"{model_size}-cls.pt")
+        head = yolo.model.model[-1]
+        if hasattr(head, "linear"):
+            in_features = head.linear.in_features
+            head.linear = nn.Linear(in_features, num_classes)
+        elif hasattr(head, "fc"):
+            in_features = head.fc.in_features
+            head.fc = nn.Linear(in_features, num_classes)
+        self.model = yolo.model
+    def forward(self, x):
+        out = self.model(x)
+        if isinstance(out, (tuple, list)):
+            out = out[0] 
+        return out
