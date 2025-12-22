@@ -2,6 +2,11 @@
 
 This example demonstrates how to use DEEPScreen2 to screen de novo generated molecules (from DrugGEN) against a specific target (CHEMBL4282).
 
+## Abstract
+**Target-specific de novo design of drug candidate molecules with graph-transformer-based generative adversarial networks**
+
+Discovering novel drug candidate molecules is a fundamental step in drug development. Generative deep learning models can sample new molecular structures from learned probability distributions; however, their practical use in drug discovery hinges on generating compounds tailored to a specific target molecule. Here we introduce DrugGEN, an end-to-end generative system for the de novo design of drug candidate molecules that interact with a selected protein. The proposed method represents molecules as graphs and processes them using a generative adversarial network that comprises graph transformer layers. Trained on large datasets of drug-like compounds and target-specific bioactive molecules, DrugGEN designed candidate inhibitors for AKT1, a kinase crucial in many cancers. Docking and molecular dynamics simulations suggest that the generated compounds effectively bind to AKT1, and attention maps provide insights into the model’s reasoning. Furthermore, selected de novo molecules were synthesized and shown to inhibit AKT1 at low micromolar concentrations in the context of in vitro enzymatic assays. These results demonstrate the potential of DrugGEN for designing target-specific molecules. Using the open-access DrugGEN codebase, researchers can retrain the model for other druggable proteins, provided a dataset of known bioactive molecules is available.
+
 ## Goal
 To filter and identify promising drug candidates from a large library of generative model outputs that are predicted to be active against CHEMBL4282.
 
@@ -41,3 +46,16 @@ python predict_deepscreen.py \
 ## Outputs
 
 *   **Predictions**: The output file will contain the predicted activity for each generated molecule, allowing you to select the best candidates for further verification.
+
+## Citation
+
+```bibtex
+@article{unlu2025target,
+  title={Target-specific de novo design of drug candidate molecules with graph-transformer-based generative adversarial networks},
+  author={{\"U}nl{\"u}, Atabey and {\c{C}}evrim, Elif and Yi{\u{g}}it, Melih G{\"o}kay and Sar{\i}g{\"u}n, Ahmet and {\c{C}}elikbilek, Hayriye and Bayram, Osman and Kahraman, Deniz Cansen and Ol{\u{g}}a{\c{c}} and Abdurrahman and Rifaioglu, Ahmet Sureyya and Bano{\u{g}}lu, Erden and others},
+  journal={Nature Machine Intelligence},
+  pages={1--17},
+  year={2025},
+  publisher={Nature Publishing Group UK London}
+}
+```

@@ -2,6 +2,11 @@
 
 This example demonstrates how to use DEEPScreen2 to train a model for identifying potential inhibitors of the Monkeypox virus DNA polymerase. The dataset includes active and inactive compounds collected from literature and DrugBank.
 
+## Abstract
+**AI-driven discovery of antiretroviral drug bictegravir and etravirine as inhibitors against monkeypox and related poxviruses**
+
+Monkeypox virus (MPXV) caused the 2022–2023 global mpox and the concurrent outbreaks in Africa, disproportionately affecting immunocompromised individuals such as people living with HIV. With no approved treatment available, we developed a robust artificial intelligence (AI) pipeline for discovering broad-spectrum poxvirus inhibitors that target the viral DNA polymerases. Among the identified leading candidates, we found that the clinically used antiretroviral drugs bictegravir and etravirine potently inhibit MPXV clade Ia, Ib and IIb infections in human intestinal and skin organoids. The broad anti-poxvirus activities of bictegravir and etravirine were further demonstrated against infections of other Orthopoxviruses such as vaccinia virus and cowpox virus. These findings support the repurposing of bictegravir and etravirine for treating mpox, especially for patients co-infected with HIV, warranting follow-up clinical investigation. The established AI pipeline and our antiviral drug discovery strategies bear major implications for responding to the ongoing mpox emergency and preparing for future poxvirus epidemics.
+
 ## Goal
 To predict small molecules that can inhibit Monkeypox viral DNA polymerase, aiding in the discovery of potential antiviral treatments.
 
@@ -48,3 +53,18 @@ python predict_deepscreen.py \
 
 *   **Trained Model**: Saved in `trained_models/` (or use the one in `examples/monkeypox/model/`).
 *   **Predictions**: Saved in `result_files/experiments/`.
+
+## Citation
+
+```bibtex
+@article{wang2025ai,
+  title={AI-driven discovery of antiretroviral drug bictegravir and etravirine as inhibitors against monkeypox and related poxviruses},
+  author={Wang, Yining and {\"U}nl{\"u}, Atabey and Wang, Xin and {\c{C}}evrim, Elif and Offermans, Dewy Mae and Flesseman, Myrthe P and Zaeck, Luca M and Wu, Liping and Bijvelds, Marcel JC and Sam-Agudu, Nadia A and others},
+  journal={Communications Biology},
+  volume={8},
+  number={1},
+  pages={1734},
+  year={2025},
+  publisher={Nature Publishing Group UK London}
+}
+```
