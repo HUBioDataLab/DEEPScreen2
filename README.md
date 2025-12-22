@@ -1,180 +1,146 @@
-## DEEPScreen2: An Automated Tool for Drug-Target Interaction Prediction Using Deep Convolutional Neural Networks Fed by 2-D Images of Compounds
+# DEEPScreen2: Deep Learning for Drug-Target Interaction Prediction
 
-Accurately predicting drug-target interactions (DTI) possess critical importance in drug discovery and development, due to the labour-intensive and costly nature of conventional experimental screening techniques. A widely-utilised deep learning-based DTI prediction tool is DEEPScreen, which was previously developed by our group. DEEPScreen2, an advanced framework for DTI prediction (Figure 1), emerges as a DCNN solution for researchers regardless of technical background, building upon the groundwork laid by its predecessor, DEEPScreen.<br>
-In this study, we proposed DEEPScreen2 (Figure 1) by offering numerous innovations over the previous implementation: (i) adopting 300x300 compounds images to increase the resolution and enable the capture of nuanced structural features; (ii) augmenting data by 36 different 10-degree rotations of the original compound images to render the model rotation invariant and thus more robust; (iii) fully automatizing the data preparation, data loading and inference/prediction procedures; (iv) updating the training, validation and test data via employing ChEMBL database v33 (as opposed to v23 in the old version); (v) introducing percentile-60 based data splitting as active and inactive data points with respect to the pChEMBL values, which extended the library over 800 target proteins.<br>
-With its advanced image-based representations and flexible usability, DEEPScreen2 illustrates the relationship between artificial intelligence centric modeling and molecular understanding. We expect that DEEPScreen2 will be utilised in translational research, by scientists working on drug discovery and repurposing for fast and preliminary virtual screening of large chemical libraries. DEEPScreen2 is available as a programmatic tool together with its datasets and results at https://github.com/HUBioDataLab/DEEPScreen2.<br>
+DEEPScreen2 is an automated, open-source framework for Drug-Target Interaction (DTI) prediction using deep learning. It leverages 2D image representations of chemical compounds to train highly accurate Convolutional Neural Networks (CNN) and Vision Transformers (ViT), enabling virtual screening for drug discovery and repurposing.
 
-# How to use
+## Key Features
 
-## Prerequisites
+*   **Automated Data Handling**: Automatically downloads, processes, and splits data from ChEMBL, MoleculeNet, and TDC.
+*   **State-of-the-Art Architectures**: Supports both **CNN** (optimized resnet-like) and **Vision Transformers (ViT)** (SwinV2-based).
+*   **Robust Preprocessing**: 300x300 image generation with 36-fold rotational augmentation for rotation-invariant predictions.
+*   **Hyperparameter Optimization**: Integrated WandB sweeps for automated hyperparameter tuning.
+*   **Task Agnostic**: Applicable to any binary classification task (bioavailability, toxicity, binding affinity) across various benchmarks.
+*   **Easy Deployment**: Simple CLI for training, evaluation, and inference.
 
-- Python 3.x
-- Install required packages:
+## Quickstart (5-10 Minutes)
 
-  ```bash
-  pip install -r requirements.txt
-  ```
+Get started with a simple run on a ChEMBL target using the default CNN model.
+
+1.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+2.  **Run a Training Job**:
+    This will download data for target `CHEMBL286`, split it, and train a model.
+    ```bash
+    python main_training.py \
+        --target_id "CHEMBL286" \
+        --assay_type "B" \
+        --pchembl_threshold 6.0 \
+        --model CNNModel1 \
+        --en quickstart_demo \
+        --project_name deepscreen_demo
+    ```
+    *Results will be saved in `result_files/experiments/` and `trained_models/`.*
+
+## Installation
+
+```bash
+git clone https://github.com/HUBioDataLab/DEEPScreen2.git
+cd DEEPScreen2
+pip install -r requirements.txt
+```
+
+**Requirements**:
+*   Python 3.x
+*   PyTorch
+*   RDKit
+*   WandB (for logging and sweeps)
+*   And others listed in `requirements.txt`
 
 ## Usage
 
-Run the script:
+DEEPScreen2 is controlled via `main_training.py` for training and `predict_deepscreen.py` for inference.
 
+### 1. Task & Dataset Selection
+
+**ChEMBL Target**:
 ```bash
- python main_training.py --target_id "CHEMBL286" --assay_type "B" --pchembl_threshold 6.0  --model ViT --en test_exp --cuda 0 --project_name test_run
+python main_training.py --target_id CHEMBL286 --dataset chembl
 ```
 
-This will download and split the data and train the model using it.
-
-If you also have a model save that you want to continue, after configuring the parameters the same as the model,
-you may use
-
+**MoleculeNet Benchmark**:
 ```bash
---model_save 'your_path'
+python main_training.py --target_id bace --dataset moleculenet --scaffold --model ViT --muon
 ```
 
-argument and start your run from a saved model.
+**Therapeutics Data Commons (TDC)**:
+```bash
+python main_training.py --target_id Bioavailability_Ma --dataset tdc
+```
 
-# Monkeypox Use-Case Guide
+### 2. Architecture Selection
 
-## File Structure
+You can select the model architecture globally using the `--model` flag.
 
-Before running the model, ensure your files are organized in the following structure:
+*   **CNN (Default)**: Optimized Convolutional Network.
+    ```bash
+    --model CNNModel1
+    ```
+*   **Vision Transformer (ViT)**: SwinV2-based Transformer.
+    ```bash
+    --model ViT --muon
+    ```
+    *Note: Use `--muon` to enable the Muon optimizer, which is recommended for ViT training.*
+
+### 3. Hyperparameter Optimization
+
+DEEPScreen2 supports automated hyperparameter tuning using Weights & Biases (WandB) Sweeps.
+
+1.  **Configure Sweep**: Edit `sweep_config.yaml` to define your search space (learning rate, batch size, architectural parameters).
+2.  **Run Sweep**:
+    ```bash
+    python main_training.py --sweep --project_name my_sweep_project --target_id CHEMBL286
+    ```
+    This will initialize a WandB sweep agent and start running experiments based on the configuration.
+
+### 4. Prediction / Inference
+
+Once a model is trained, use `predict_deepscreen.py` to screen new molecules.
+
+```bash
+python predict_deepscreen.py \
+    --model_path trained_models/your_experiment_name/best_model.pth \
+    --smiles_file prediction_files/your_compounds.csv \
+    --target_id my_prediction_run
+```
+*   `--smiles_file`: A CSV containing SMILES strings to predict.
+*   `--model_path`: Path to the `.pth` checkpoint file.
+
+## Examples
+
+Explore detailed use-cases in the `examples/` directory:
+
+*   **[Monkeypox Viral DNA Polymerase](examples/monkeypox/README.md)**:
+    Predicting active compounds against Monkeypox virus using data from DrugBank and literature.
+*   **[DrugGEN Generated Molecules](examples/druggen/README.md)**:
+    Screening molecules generated by the DrugGEN model for specific target activity.
+
+## Project Structure
 
 ```
 DEEPScreen2/
-├── training_files/
-│   └── target_training_datasets/
-│       └── monkeypox/
-│           └── activity_data.csv
-├── trained_models/
-│   └── deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64/
-│       └── monkeypox_best_val-monkeypox-CNNModel1-512-256-0.00001-64-0.2-100-deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64-state_dict.pth
-├── result_files/
-│   └── experiments/
-│       └── deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64/
-│           ├── best_val_test_performance_results-monkeypox-CNNModel1-512-256-0.00001-64-0.2-100-deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64.txt
-│           └── best_val_test_predictions-monkeypox-CNNModel1-512-256-0.00001-64-0.2-100-deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64.txt
-└── prediction_files/
-    └── drugbank_mols.csv
+├── examples/               # Specific use-case examples (Monkeypox, DrugGEN)
+├── main_training.py        # Main entry point for training
+├── train_deepscreen.py     # Training logic and loops
+├── predict_deepscreen.py   # Inference script
+├── models.py               # Model definitions (CNNModel1, ViT)
+├── data_processing.py      # Data loading and image generation
+├── sweep_config.yaml       # Hyperparameter sweep configuration
+├── config.yaml             # Default configuration
+└── requirements.txt        # Python dependencies
 ```
 
-## Running the Model
+## Coming Soon / In Progress
 
-### Step 1: Training
+*   **YOLO Support**: We are working on integrating YOLO-based object detection architectures for more interpretable feature localization on molecular images. Stay tuned!
 
-To train the model with our pre-configured settings, run:
+## Citations
 
-```bash
-python main_training.py \
-    --target_id monkeypox \
-    --en experiment_name \
-    --project_name project_name \
-    # (project name and experiment name are optional)
-    --pchembl_threshold 5.8
-```
+If you use DEEPScreen2 in your research, please cite our relevant works:
 
-### Step 2: Making Predictions (usecase: viral DNA polymerase model)
+*   *DEEPScreen: An Automated Tool for Drug-Target Interaction Prediction...*
+*   *Monkeypox Paper Citation...* (Please refer to the example READMEs or the paper for full text)
 
-After training, you can make predictions using:
-
-```bash
-python predict_deepscreen.py \
-    --model_path trained_models/deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64/monkeypox_best_val-monkeypox-CNNModel1-512-256-0.00001-64-0.2-100-deepscreen_scaffold_balanced_lr0.00001_drop0.2_bs64-state_dict.pth \
-    --smiles_file prediction_files/drugbank_mols.csv \
-    --target_id drugbank
-```
-
-Note: All necessary files are included in the repository. The files under `DEEPScreen2/monkeypox/` contain the published results.
-
-# DrugGEN Use-Case Guide
-
-## Running the Model
-
-### Step 1: Training
-
-To train the model with our pre-configured settings, run:
-
-```bash
-python main_training.py \
-    --target_id CHEMBL4282 \
-    --en experiment_name \
-    --project_name project_name \
-    # (project name and experiment name are optional)
-    --pchembl_threshold 6.0
-```
-
-### Step 2: Making Predictions (usecase: DrugGEN molecules)
-
-After training, you can make predictions using:
-
-```bash
-python predict_deepscreen.py \
-    --model_path trained_models/deepscreen_scaffold_balanced/CHEMBL4282_best_val-CHEMBL4282-CNNModel1-512-256-0.001-256-0.3-20-deepscreen_scaffold_balanced_lr0.001_drop0.3_bs256-state_dict.pth \
-    --smiles_file prediction_files/DrugGEN_generated_molecules.csv \
-    --target_id DrugGEN
-```
-
-Note: All necessary files are included in the repository. The files under `DEEPScreen2/druggen/` contain the published results.
-
-# MoleculeNet Use-Case Guide
-## File Structure
-
-## Step 1: Training
-
-To train the model with our pre-configured settings, run:
-
-```bash
-python main_training.py \
-    # Bace dataset from MoleculeNet
-    --target_id bace \
-    # Output filename
-    --output_file bace.csv \
-    --en experiment_name \
-    --project_name project_name \
-    --dataset "moleculenet" \
-    --max_cores 1 \
-    # Use ViT instead of CNN
-    --model ViT \
-    # Use Muon optimizer (for ViT only)
-    --muon \
-    # Scaffold split recommended for MoleculeNet
-    --scaffold
-```
-Step 2: Making Predictions (usecase: MoleculeNet benchmark molecules)
-
-After training, you can make predictions using:
-
-python predict_deepscreen.py \
-    --model_path trained_models/deepscreen_scaffold_balanced_lr0.0001_drop0.3_bs128/moleculenet_best_val-tdc-CNNModel1-512-256-0.0001-128-0.3-50-deepscreen_scaffold_balanced_lr0.0001_drop0.3_bs128-state_dict.pth \
-    --smiles_file prediction_files/moleculenet_mols.csv \
-    --target_id your_id
-Note: All necessary files are included in the repository. The files under DEEPScreen2/moleculenet/ contain the published results.
-
-# TDC Use-Case Guide
-## File Structure
-
-Before running the model, you don't have to have the dataset in prior, just select the name of the binary classification dataset from the TDC website. The files will be automatically downloaded and prepared for you
-
-## Step 1: Training
-
-To train the model with our pre-configured settings, run:
-
-```bash
-python main_training.py \ 
-        --target_id Bioavailability_Ma # Bioav dataset from TDC
-        --en experiment_name 
-        --project_name project_name
-        --dataset tdc 
-        --max_cores 1 
-        --model ViT # or CNN if you erase this flag
-        --muon # if you want to use muon optimizer (only available for ViT for now)
-```
-Step 2: Making Predictions (usecase: TDC benchmark molecules)
-
-After training, you can make predictions using:
-```bash
-python predict_deepscreen.py \
-    --model_path trained_models/deepscreen_scaffold_balanced_lr0.0001_drop0.3_bs128/tdc_best_val-tdc-CNNModel1-512-256-0.0001-128-0.3-50-deepscreen_scaffold_balanced_lr0.0001_drop0.3_bs128-state_dict.pth \
-    --smiles_file prediction_files/tdc_mols.csv \
-    --target_id your_folder_name
-```
+---
+**License**: [MIT](LICENSE) | **Contributing**: Pull requests are welcome!
