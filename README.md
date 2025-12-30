@@ -2,6 +2,8 @@
 
 Computational models for drug–target interaction (DTI) prediction aim to reduce the cost of experimental screening, but often require complex molecular representations and long development cycles. Here we present DEEPScreen++, a modular, open-source framework that performs DTI prediction directly from RDKit-generated 2D molecular images, expanded with augmentation, using convolutional neural network and vision transformer backbones. DEEPScreen++ streamlines data curation, image generation, training and inference into an end-to-end pipeline that can be completed within seven days for a new target on standard hardware. Prospective applications to de novo design and drug repurposing identified two experimentally confirmed active molecules and two repurposed drugs, respectively. DEEPScreen++ thus demonstrates that simple image-based models can match or exceed traditional descriptor-based approaches for high-accuracy DTI prediction and rapid hypothesis generation.
 
+![DeepScreen System](assets/deepscreen_system.png)
+
 ## Key Features
 
 *   **Automated Data Handling**: Automatically downloads, processes, and splits data from ChEMBL, MoleculeNet, and TDC.
