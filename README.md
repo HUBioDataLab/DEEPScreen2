@@ -85,11 +85,21 @@ You can select the model architecture globally using the `--model` flag.
     ```
 *   **Vision Transformer (ViT)**: SwinV2-based Transformer.
     ```bash
-    --model ViT --muon
+    --model ViT
     ```
-    *Note: Use `--muon` to enable the Muon optimizer, which is recommended for ViT training.*
 
-### 3. Hyperparameter Optimization
+### 3. Optimizer Selection
+
+DEEPScreen2 supports multiple optimizers to suit different architectures.
+
+*   **AdamW (Default)**: Standard optimizer, robust for most cases.
+    *(Implicitly used if no other optimizer is specified)*
+*   **Muon**: A momentum-based optimizer, highly recommended for **ViT** training due to better convergence properties.
+    ```bash
+    --muon
+    ```
+
+### 4. Hyperparameter Optimization
 
 DEEPScreen2 supports automated hyperparameter tuning using Weights & Biases (WandB) Sweeps.
 
@@ -100,7 +110,7 @@ DEEPScreen2 supports automated hyperparameter tuning using Weights & Biases (Wan
     ```
     This will initialize a WandB sweep agent and start running experiments based on the configuration.
 
-### 4. Prediction / Inference
+### 5. Prediction / Inference
 
 Once a model is trained, use `predict_deepscreen.py` to screen new molecules.
 
