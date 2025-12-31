@@ -71,8 +71,10 @@ python main_training.py --target_id bace --dataset moleculenet --scaffold --mode
 ```
 
 **Therapeutics Data Commons (TDC)**:
+
+This should change according to the dataset you will use. For tox tasks, you should add tdc_tox as the dataset argument and tdc_adme otehrwise. (Only hERG is used as tox in our experiments.)
 ```bash
-python main_training.py --target_id Bioavailability_Ma --dataset tdc
+python main_training.py --target_id Bioavailability_Ma --dataset tdc_adme # or tdc_tox
 ```
 
 ### 2. Architecture Selection
@@ -103,10 +105,10 @@ DEEPScreen2 supports multiple optimizers to suit different architectures.
 
 DEEPScreen2 supports automated hyperparameter tuning using Weights & Biases (WandB) Sweeps.
 
-1.  **Configure Sweep**: Edit `sweep_config.yaml` to define your search space (learning rate, batch size, architectural parameters).
+1.  **Configure Sweep**: Edit `sweep_cnn.yaml` or `sweep_vit.yaml` to define your search space (learning rate, batch size, architectural parameters).
 2.  **Run Sweep**:
     ```bash
-    python main_training.py --sweep --project_name my_sweep_project --target_id CHEMBL286
+    python main_training.py --sweep --project_name --model your_model_name my_sweep_project --target_id CHEMBL286
     ```
     This will initialize a WandB sweep agent and start running experiments based on the configuration.
 
@@ -137,13 +139,15 @@ Explore detailed use-cases in the `examples/` directory:
 ```
 DEEPScreen2/
 ├── examples/               # Specific use-case examples (Monkeypox, DrugGEN)
+├── config/                 # Configuration files
+│   ├── config.yaml         # Default training & runtime 
+│   ├── sweep_cnn.yaml      # WandB sweep configuration for CNN
+|   └── sweep_vit.yaml      # WandB sweep configuration for ViT 
 ├── main_training.py        # Main entry point for training
 ├── train_deepscreen.py     # Training logic and loops
 ├── predict_deepscreen.py   # Inference script
 ├── models.py               # Model definitions (CNNModel1, ViT)
 ├── data_processing.py      # Data loading and image generation
-├── sweep_config.yaml       # Hyperparameter sweep configuration
-├── config.yaml             # Default configuration
 └── requirements.txt        # Python dependencies
 ```
 
