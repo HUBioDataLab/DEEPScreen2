@@ -1,0 +1,39 @@
+method: bayes
+metric:
+  name: val_loss
+  goal: minimize
+parameters:
+
+  epoch:
+    value: 80
+
+  # --- ViT Specifics ---
+  window_size:
+    values: [5, 7]
+  hidden_size:
+    values: [384, 768]
+  depths:
+    values: [[2,2,6,2]]
+  attention_probs_dropout_prob:
+    value: 0
+  drop_path_rate:
+    value: 0.1
+  layer_norm_eps:
+    value: 1e-5
+  encoder_stride:
+    value: 32
+  embed_dim:
+    value: 96
+  mlp_ratio:
+    value: 4
+  # --- Common ---
+  learning_rate:
+    value: 1e-5
+  bs:
+    values: [16, 32]
+  dropout:
+    values: [0.5]
+  muon_lr:
+    values: [2.5e-4,3.5e-4]
+  end_learning_rate:
+    value: 0.2

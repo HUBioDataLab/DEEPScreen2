@@ -1,7 +1,7 @@
 # data_processing.py
 from PIL import Image
-from itertools import repeat
 
+import re
 import os
 import cv2
 import json
@@ -19,6 +19,8 @@ from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
 from chemprop.data import make_split_indices
 from tdc.single_pred import ADME, Tox
 from tqdm import tqdm
+import glob          
+import torch
 #####################################################
 random.seed(42)  # Very important for reproducibility
 #####################################################
@@ -174,7 +176,6 @@ def handle_group(g):
         for col in median_vals.index:
             row[col] = median_vals[col]
         return row
-
     
 def detect_deduplicate_and_save(input_csv):
 
@@ -195,9 +196,6 @@ def detect_deduplicate_and_save(input_csv):
     print("New csv file name: ",output_csv)
                      
     return detect_csv
-
-
-
 
 def apply_subsampling(act_list, inact_list, max_total_samples):
     """
@@ -578,7 +576,7 @@ def negative_enrichment_pipeline(chembl_target_id,
     return list(combined_inactives), chemblid_smiles_dict
 
 
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email):
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email):
     """
     split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
     """
@@ -588,7 +586,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             pandas_df = pd.read_csv(activity_data)        
             pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
             pandas_df = pandas_df[["canonical_smiles", "target"]]
-
+            print("no 1")
         else:
             if dataset == "tdc_adme":
                 data = ADME(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
@@ -596,13 +594,16 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                 data = Tox(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
 
             split = data.get_split()
+            # split["train"]["split"] = "train"
+            # split["valid"]["split"] = "valid"
+            # split["test"]["split"] = "test" alternative method
 
             pandas_df = pd.concat([split["train"],split["valid"],split["test"]])
             activity_data = pandas_df
 
             pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
             pandas_df = pandas_df[["Drug_ID","canonical_smiles", "target"]].copy()
-
+            pandas_df = pandas_df.drop_duplicates(subset=["canonical_smiles","Drug_ID"], keep="first") # Drop duplicate rows that contain same smiles representation more than once
 
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
 
@@ -614,17 +615,71 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
         if dataset != "moleculenet": # Creating splits given by tdc
             
-            for m in pandas_df.itertuples(index=False):
-                m_drug_id = m.Drug_ID
-                if(split["train"]["Drug_ID"] == m_drug_id).any():
-                    train_test_val_situation = "train"
-                elif (split["valid"]["Drug_ID"] == m_drug_id).any():
-                    train_test_val_situation = "valid"
-                else:
-                    train_test_val_situation = "test"
+            # This code sequence fixes tdc's mislabels.
+            if no_fix_tdc:
+                for split_name in ["train", "valid", "test"]:
+                    for m in split[split_name].itertuples(index=False):
+                        # Use canonical SMILES or Drug_ID as before
+                        chembl_id = pandas_df.loc[
+                            pandas_df["Drug_ID"] == m.Drug_ID, "molecule_chembl_id"
+                        ].values[0]
+                        
+                        act_or_inact = "act" if m.target == 1 else "inact"
+                        tdc_split_dict[chembl_id] = (split_name, act_or_inact)
+            else:
+                for m in pandas_df.itertuples(index=False): 
+                    m_drug = m.canonical_smiles
+                    m_drug_id = m.Drug_ID  
 
-                act_or_inact = "act" if m.target == 1 else "inact"
-                tdc_split_dict[m.molecule_chembl_id] = (train_test_val_situation, act_or_inact)
+                    in_a = (split["train"]["Drug_ID"] == m_drug_id).any()
+                    in_b = (split["valid"]["Drug_ID"] == m_drug_id).any()
+                    in_c = (split["test"]["Drug_ID"] == m_drug_id).any()
+
+                    if in_a and not in_b and not in_c:
+                        train_test_val_situation = "train"
+
+                    elif in_b and not in_a and not in_c:
+                        train_test_val_situation = "valid"
+
+                    elif in_c and not in_a and not in_b:
+                        train_test_val_situation = "test"
+
+                    else:
+                        in_a = (split["train"]["Drug"] == m_drug).any()
+                        in_b = (split["valid"]["Drug"] == m_drug).any()
+                        in_c = (split["test"]["Drug"] == m_drug).any()
+                        if in_a:
+                            train_test_val_situation = "train"
+
+                        elif in_b:
+                            train_test_val_situation = "valid"
+
+                        elif in_c:
+                            train_test_val_situation = "test"
+
+                    act_or_inact = "act" if m.target == 1 else "inact"
+                    tdc_split_dict[m.molecule_chembl_id] = (train_test_val_situation, act_or_inact)
+                        
+            train_count = sum(1 for v in tdc_split_dict.values() if v[0] == "train")
+            valid_count = sum(1 for v in tdc_split_dict.values() if v[0] == "valid")
+            test_count  = sum(1 for v in tdc_split_dict.values() if v[0] == "test")
+
+            orig_train_count = len(split["train"])
+            orig_valid_count = len(split["valid"])
+            orig_test_count  = len(split["test"])
+            print("\n=== SPLIT CHECK ===")
+            print(f"Original train size: {orig_train_count} | Assigned train size: {train_count}")
+            print(f"Original valid size: {orig_valid_count} | Assigned valid size: {valid_count}")
+            print(f"Original test size : {orig_test_count}  | Assigned test size : {test_count}")
+
+            ok_train = (train_count == orig_train_count)
+            ok_valid = (valid_count == orig_valid_count)
+            ok_test  = (test_count == orig_test_count)
+
+            if ok_train and ok_valid and ok_test:
+                print("✔ Split control checked: Train/Valid/Test numbers match!")
+            else:
+                print("⚠ WARNING: Mismatch in split sizes!")
 
         moleculenet_dict = {}
         for i, row_ in pandas_df.iterrows():
@@ -632,7 +687,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             smi = row_["canonical_smiles"]
             moleculenet_dict[cid] = ["dummy1", "dummy2", "dummy3", smi]
         chemblid_smiles_dict = moleculenet_dict
-
+        print("no 2")
     else:
         df = pd.read_csv(activity_data)
     
@@ -661,8 +716,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         create_act_inact_files_for_targets(activity_data, targetid, "chembl", pchembl_threshold,scaffold, target_prediction_dataset_path) 
 
         act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, "chembl", pchembl_threshold))
-
-    print(len(act_inact_dict))
 
     for tar in act_inact_dict:
         
@@ -865,21 +918,26 @@ def train_val_test_split(smiles_file, scaffold_split,split_ratios=(0.8, 0.1, 0.1
 
 
 class DEEPScreenDataset(Dataset):
-    def __init__(self, target_id, train_val_test):
+    def __init__(self, target_id, train_val_test,parent_path = os.path.join(training_files_path,"target_training_datasets")):
         self.target_id = target_id
         self.train_val_test = train_val_test
-        self.training_dataset_path = os.path.join(training_files_path,"target_training_datasets",target_id)
-        self.train_val_test_folds = json.load(open(os.path.join(self.training_dataset_path, "train_val_test_dict.json")))
-        self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds[train_val_test]]
-        self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds[train_val_test]]
+        self.dataset_path = os.path.join(parent_path,target_id)
+        self.train_val_test_folds = json.load(open(os.path.join(self.dataset_path, "train_val_test_dict.json")))
 
+        if train_val_test == "all":
+            self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds] # burada train val test folds olmamalı predictionun beklediği format bu olmayabilir burayı değiştir
+            self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds]
+        else:
+            self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds[train_val_test]]
+            self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds[train_val_test]]
+    
     def __len__(self):
         return len(self.compid_list)
 
     def __getitem__(self, index):
         comp_id = self.compid_list[index]
         
-        img_paths = [os.path.join(self.training_dataset_path, "imgs", "{}.png".format(comp_id))]        
+        img_paths = [os.path.join(self.dataset_path, "imgs", "{}.png".format(comp_id))]        
 
         img_path = random.choice([path for path in img_paths if os.path.exists(path)])      
             
@@ -916,3 +974,130 @@ def get_training_target_list(chembl_version):
     target_df = pd.read_csv(os.path.join(training_files_path, "{}_training_target_list.txt".format(chembl_version)), index_col=False, header=None)
     
     return list(target_df[0])
+
+
+class PredictionDataset(Dataset):
+    """
+    Dataset specifically for Prediction/Inference.
+    1. Loads ALL rotations for compounds in the specified split.
+    2. Uses a dictionary for label lookup.
+    3. Filters images based on which compounds are in label_dict.
+    """
+    def __init__(self, target_id, parent_path, label_dict=None):
+        self.target_id = target_id
+        self.dataset_path = os.path.join(parent_path, target_id)
+        self.img_dir = os.path.join(self.dataset_path, "imgs")
+        self.label_dict = label_dict  # Expects { 'CompID': 1, ... }
+
+        # Find ALL images (e.g., CHEMBL123_0.png, CHEMBL123_10.png)
+        all_image_paths = glob.glob(os.path.join(self.img_dir, "*.png"))
+        
+        # Filter images based on label_dict (only include compounds in the split)
+        if self.label_dict is not None:
+            # Extract compound IDs that should be included (from label_dict keys)
+            valid_compound_ids = set(self.label_dict.keys())
+            
+            # Filter image paths to only include those matching valid compound IDs
+            self.all_image_paths = []
+            for img_path in all_image_paths:
+                filename = os.path.basename(img_path)
+                comp_id = filename.rsplit('.')[0]  # "CHEMBL123_10.png" -> "CHEMBL123_10"
+                
+                # Remove rotation suffix to get base compound ID
+                base_comp_id = re.sub(r'_\d+$', '', comp_id)  # "CHEMBL123_10" -> "CHEMBL123"
+                
+                # Only include if this compound is in the label_dict
+                if base_comp_id in valid_compound_ids:
+                    self.all_image_paths.append(img_path)
+            
+            print(f"Filtered to {len(self.all_image_paths)} images from {len(all_image_paths)} total images")
+            print(f"Covering {len(valid_compound_ids)} unique compounds in the specified split")
+        else:
+            # No filtering - use all images
+            self.all_image_paths = all_image_paths
+            print(f"No split filtering - using all {len(self.all_image_paths)} images")
+        
+        if len(self.all_image_paths) == 0:
+            print(f"Warning: No images found in {self.img_dir} for the specified split")
+
+    def __len__(self):
+        return len(self.all_image_paths)
+
+    def __getitem__(self, index):
+        img_path = self.all_image_paths[index]
+        
+        # Parse CompID from filename: "CHEMBL123_10.png" -> "CHEMBL123_10"
+        filename = os.path.basename(img_path)
+        comp_id = filename.rsplit('.')[0]
+        
+        # Image Loading & Normalization
+        try:
+            img = Image.open(img_path)
+            img_arr = np.array(img)
+            img_arr = img_arr / 255.0
+            img_arr = img_arr.transpose((2, 0, 1)) # (C, H, W)
+        except Exception as e:
+            print(f"Error reading {img_path}: {e}")
+            img_arr = np.zeros((3, 200, 200)) # Dummy
+
+        # Label Lookup
+        label = -1 # Default (Unknown)
+        base_comp_id = re.sub(r'_\d+$', '', comp_id)
+        if self.label_dict and base_comp_id in self.label_dict.keys():
+            label = self.label_dict[base_comp_id]
+            
+        # Return torch tensor immediately
+        return torch.tensor(img_arr).float(), label, comp_id
+
+def load_deepscreen_labels(target_id, parent_path,split):
+    """
+    Parses 'train_val_test_dict.json' located in the target folder.
+    Structure: {"training": [["ID", 1]...], "validation": ...}
+    Returns flattened dict: {'ID': 1}
+    """
+    json_path = os.path.join(parent_path, target_id, "train_val_test_dict.json")
+
+    if not os.path.exists(json_path):
+        return None
+    
+    print(f"Loading labels from {json_path}...")
+    try:
+        data = json.load(open(json_path))
+        label_dict = {}
+        
+        # Flatten the dictionary
+        for split_key, sample_list in data.items():
+            if split_key!=split:
+                continue
+            for item in sample_list:
+                if len(item) >= 2:
+                    comp_id = item[0]
+                    label = int(item[1])
+                    comp_id = re.sub(r'_\d+$', '', comp_id)
+                    label_dict[comp_id] = label
+        return label_dict
+
+    except Exception as e:
+        print(f"Error parsing label file: {e}")
+        return None
+
+def get_prediction_loader(target_id, parent_path, label_dict=None, batch_size=32):
+    """
+    Returns a DataLoader using the PredictionDataset.
+    
+    Args:
+        target_id: Target identifier
+        parent_path: Path to parent directory
+        label_dict: Dictionary mapping compound IDs to labels.
+                   If provided, only images for compounds in this dict will be loaded.
+                   This enables split-specific prediction.
+        batch_size: Batch size for DataLoader
+    
+    Returns:
+        DataLoader or None if no images found
+    """
+    dataset = PredictionDataset(target_id, parent_path, label_dict)
+    if len(dataset) == 0:
+        return None
+    # Shuffle=False is important for reproducibility in prediction
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)

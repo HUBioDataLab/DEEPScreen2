@@ -1,0 +1,23 @@
+method: bayes
+metric:
+  name: val_loss
+  goal: minimize
+parameters:
+  epoch:
+    value: 80
+  # --- CNN Specifics ---
+  fc1:
+    values: [256, 512]
+  fc2:
+    values: [ 512,1024]
+  # --- Common ---
+  learning_rate:
+    value: 1e-5
+  bs:
+    values: [32]
+  dropout:
+    values: [0.5]
+  muon_lr:
+    values: [2.5e-4,3.5e-4]
+  end_learning_rate:
+    value: 0.2

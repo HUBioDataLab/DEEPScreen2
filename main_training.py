@@ -40,7 +40,7 @@ parser.add_argument(
     metavar='CORE',
     help='CUDA core index to use (default: 0)')
 
-
+ 
 # ============================
 # Model & Architecture
 # ============================
@@ -57,9 +57,22 @@ parser.add_argument(
     default="None",
     help='Path to previous run if exists (default: None)')
 
+parser.add_argument(
+    '--config_folder',
+    type=str,
+    default="config",
+    help="Path to yaml model config files folder")
+
 # ============================
 # Data Processing / Augmentation
 # ============================
+
+parser.add_argument(
+    '--no_fix_tdc',
+    action='store_false',
+    help='Disable the custom fixation for the broken labels in tdc')
+
+
 parser.add_argument(
     '--scaffold',
     action='store_true',
@@ -185,20 +198,13 @@ parser.add_argument(
     default=50, 
     help="Maximum number of concurrent requests")
 
-parser.add_argument(
-    '--batch_size', 
-    type=int, 
-    default=10, 
-    help="Number of targets to process per batch")
-
-
 # ============================
 # Experiment / Logging
 # ============================
 parser.add_argument(
     '--en',
     type=str,
-    default="deepscreen_scaffold_balanced",
+    default="deepscreen_run",
     metavar='EN',
     help='Experiment name')
 
@@ -233,7 +239,6 @@ parser.add_argument(
 args = None
 
 def sweep():
-
     wandb.init(entity = args.entity_name,project=args.project_name, id=args.run_id, resume='allow')
 
     config = wandb.config
@@ -246,22 +251,7 @@ def sweep():
     train_validation_test_training(
         args.target_id,
         args.model,
-        config.fc1,
-        config.fc2,
-        float(config.learning_rate),
-        config.muon_lr,
-        config.bs,
-        config.dropout,
-        config.epoch,
-        config.hidden_size,
-        config.window_size,
-        config.attention_probs_dropout_prob,
-        config.drop_path_rate,
-        config.layer_norm_eps,           
-        config.encoder_stride,
-        config.embed_dim,
-        config.depths,
-        config.mlp_ratio,          
+        config,
         args.en,
         args.cuda,
         args.run_id,
@@ -272,16 +262,11 @@ def sweep():
         args.patience,
         args.warmup,
         args.sweep,
-        scheduler=args.with_scheduler,
-        end_learning_rate_factor=float(config.end_learning_rate),
+        scheduler = args.with_scheduler,
         use_muon = args.muon
         )
 
-def dict_to_namespace(d):
-    if isinstance(d, dict):
-        return SimpleNamespace(**{k: dict_to_namespace(v) for k, v in d.items()})
-    else:
-        return d
+
 
 def main():
     global args
@@ -290,8 +275,9 @@ def main():
     # Create platform-independent path
     target_training_dataset_path = Path(args.training_dir).resolve()
     target_training_dataset_path.mkdir(parents=True, exist_ok=True)
-
+    print("start donwload")
     download_target(args)
+    print("end donwload")
 
     create_final_randomized_training_val_test_sets(
         target_training_dataset_path / args.target_id / args.output_file,
@@ -300,6 +286,7 @@ def main():
         args.target_id,
         target_training_dataset_path,
         args.dataset,
+        args.no_fix_tdc,
         args.pchembl_threshold,
         args.subsampling,
         args.max_total_samples,
@@ -307,10 +294,16 @@ def main():
         args.negative_enrichment,
         args.augment,
         args.email)
-    
-    if args.sweep:
 
-        with open("sweep_config.yaml") as f:
+    config_folder = args.config_folder
+    if args.sweep:
+        # 1. Determine which YAML file to use
+        if "CNN" in args.model:
+            yaml_file = "sweep_cnn.yaml"
+        else:
+            yaml_file = "sweep_vit.yaml"
+
+        with open(os.path.join(config_folder,yaml_file)) as f:
             sweep_config = yaml.safe_load(f)
 
         sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
@@ -321,34 +314,12 @@ def main():
     
     else:
 
-        
-        with open("config.yaml") as f:
+        with open(os.path.join(config_folder,"config.yaml")) as f:
             config = yaml.safe_load(f)
-
-        config_ns = dict_to_namespace(config)
-
-        params = config_ns.parameters
-
-        
         train_validation_test_training(
         args.target_id,
         args.model,
-        params.fc1,
-        params.fc2,
-        float(params.learning_rate),
-        params.muon_lr,
-        params.bs,
-        params.dropout,
-        params.epoch,
-        params.hidden_size,
-        params.window_size,
-        params.attention_probs_dropout_prob,
-        params.drop_path_rate,
-        params.layer_norm_eps,           
-        params.encoder_stride,
-        params.embed_dim,
-        params.depths,
-        params.mlp_ratio,          
+        config["parameters"],
         args.en,
         args.cuda,
         args.run_id,
@@ -360,7 +331,6 @@ def main():
         args.warmup,
         args.sweep,
         scheduler=args.with_scheduler,
-        end_learning_rate_factor=float(params.end_learning_rate),
         use_muon = args.muon
         )
         

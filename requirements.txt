@@ -14,5 +14,5 @@ aiohttp
 asyncio
 scipy
 rdkit
-PyTDC
+pytdc
 tqdm

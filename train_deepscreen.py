@@ -84,7 +84,9 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
     all_labels = []
     all_predictions = []
     all_pred_probs = []
+
     for i, data in enumerate(data_loader):
+
         img_arrs, labels, comp_ids = data
         img_arrs, labels = torch.tensor(img_arrs).type(torch.FloatTensor).to(device), torch.tensor(labels).to(device)
         total_count += len(comp_ids)
@@ -100,98 +102,154 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
 
     return total_loss, total_count, all_comp_ids, all_labels, all_predictions,all_pred_probs
 
+def aggregate_predictions(comp_ids, labels, predictions, pred_probs):
+
+    unique_mols = {}
+    
+    # Collect molecules in dict
+    for cid, lab, pred, prob in zip(comp_ids, labels, predictions, pred_probs):
+        cid = cid.rsplit('_', 1)[0]
+        if cid not in unique_mols.keys():
+            unique_mols[cid] = {"labels": [], "preds": [], "probs": []}
+        unique_mols[cid]["labels"].append(lab)
+        unique_mols[cid]["preds"].append(pred)
+        unique_mols[cid]["probs"].append(prob)
+    agg_labels = []
+    agg_preds = []
+    agg_probs = []
+    agg_comp_ids = []
+    
+    for cid, data in unique_mols.items():
+        # Label: All of are the same so we can get the first
+        current_label = data["labels"][0]
+        
+        # Voting 
+        total_rotations = len(data["preds"])
+        positive_votes = sum(data["preds"]) 
+        
+        if positive_votes >= (total_rotations / 2):
+            final_pred = 1
+        else:
+            final_pred = 0
+            
+        avg_prob = np.mean(np.array(data["probs"]), axis=0)
+
+        agg_comp_ids.append(cid)
+        agg_labels.append(current_label)
+        agg_preds.append(final_pred)
+        agg_probs.append(avg_prob)
+    return agg_comp_ids, agg_labels, agg_preds, agg_probs
+
 def train_validation_test_training(
-    target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, muon_lr, batch_size,
-    drop_rate, n_epoch, hidden_size, window_size, att_drop, drop_path_rate,
-    layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio,
-    experiment_name, cuda_selection, run_id, model_save, project_name, entity,
-    early_stopping, patience, warmup, sweep=False, scheduler=False,
-    end_learning_rate_factor=None, use_muon=False
+    target_id, model_name, config, experiment_name, cuda_selection, run_id, model_save, project_name, entity,
+    
+    early_stopping, 
+    patience, 
+    warmup,
+    
+    sweep=False, scheduler=False, use_muon=False
 ):
-    arguments = [
-        "{:.16f}".format(arg).rstrip('0') if isinstance(arg, float) else str(arg)
-        for arg in [target_id, model_name, fully_layer_1, fully_layer_2, learning_rate, batch_size, drop_rate, n_epoch, experiment_name]
-    ]
 
-    best_test_performance_dict = {
-        "Accuracy": 0, "Precision": 0, "Recall": 0, "F1-Score": 0,
-        "MCC": 0, "TP": 0, "TN": 0, "FP": 0, "FN": 0
+    # ---- 1. CONFIGURATION MERGE (Fail-safe) ----
+    # Add runtime/function args to cfg so they are logged too
+    cfg = {
+        "target_id": target_id,
+        "model_name": model_name,
+        "experiment_name": experiment_name,
+        "cuda_selection": cuda_selection,
+        "scheduler": scheduler,
+        "use_muon": use_muon,
+        "model_save": model_save
     }
-    best_test_predictions = ""
+    
+    for i,v in config.items():
+        cfg[i] = v
+    # ---- 2. GENERATE RUN STRING ----
+    # Create a unique identifier string based on key hyperparameters
+    # We select specific keys to be part of the filename/ID
+    key_params = [
+        target_id, model_name, cfg['fc1'], cfg['fc2'], 
+        cfg['learning_rate'], cfg['bs'], cfg['dropout'], cfg['epoch'], 
+        experiment_name
+    ]
+    
+    # Clean formatting for floats (removes trailing zeros)
+    arguments_list = [
+        "{:.16f}".format(x).rstrip('0').rstrip('.') if isinstance(x, float) else str(x)
+        for x in key_params
+    ]
+    str_arguments = "-".join(arguments_list)
+    print("Run ID:", str_arguments)
 
-    str_arguments = "-".join(arguments)
-    print("Arguments:", str_arguments)
-
-    if run_id == "None":
-        run_id = None
-
-    # ---- W&B logging section ---- #
+    # ---- 3. W&B LOGGING ----
     if not sweep:
-
-        wandb_config = {
-            "target_id": target_id,
-            "model_name": model_name,
-            "fully_layer_1": fully_layer_1,
-            "fully_layer_2": fully_layer_2,
-            "learning_rate": learning_rate,
-            "batch_size": batch_size,
-            "drop_rate": drop_rate,
-            "n_epoch": n_epoch,
-            "hidden_size": hidden_size,
-            "window_size": window_size,
-            "att_drop": att_drop,
-            "drop_path_rate": drop_path_rate,
-            "layer_norm_eps": layer_norm_eps,
-            "encoder_stride": encoder_stride,
-            "embed_dim": embed_dim,
-            "depths": depths,
-            "mlp_ratio": mlp_ratio,
-            "cuda_selection": get_device(cuda_selection),
-            "model_save": model_save,
-            "early_stopping": early_stopping,
-            "patience": patience,
-            "warmup": warmup,
-            "scheduler": scheduler,
-            "end_learning_rate_factor": end_learning_rate_factor,
-            "use_muon": use_muon,
-        }
-
         wandb_args = {
             "project": project_name,
-            "id": run_id,
+            "id": run_id if run_id != "None" else None,
             "name": experiment_name,
             "resume": "allow",
-            "config": wandb_config
+            "config": cfg, # Just pass the whole merged dict!
         }
-
-        # entity None ise eklemiyoruz (default hesap devreye girer)
+        
         if entity not in [None, "", "None"]:
             wandb_args["entity"] = entity
 
         wandb.init(**wandb_args)
 
-
+    # ---- 4. INITIALIZATION ----
     device = get_device(cuda_selection)
-    exp_path = os.path.join(result_files_path, "experiments", experiment_name)
-
-    if not os.path.exists(exp_path):
-        os.makedirs(exp_path)
-
-    if not os.path.exists(os.path.join(trained_models_path, experiment_name)):
-        os.makedirs(os.path.join(trained_models_path, experiment_name))
-
-    best_val_test_result_fl = open(
-        os.path.join(exp_path,"best_val_test_performance_results-"+str_arguments+".txt"), "w")
-    best_val_test_prediction_fl = open(
-        os.path.join(exp_path,"best_val_test_predictions-"+str_arguments+".txt"), "w")
-
-    train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(target_id, batch_size)
     
+    # Setup Paths
+    exp_path = os.path.join(result_files_path, "experiments", experiment_name)
+    os.makedirs(exp_path, exist_ok=True) # exist_ok=True replaces the if check
+    os.makedirs(os.path.join(trained_models_path, experiment_name), exist_ok=True)
+
+    # File Handlers (Using 'with' is better usually, but keeping your style for persistence)
+    # Note: Added 'str_arguments' to filename as requested
+    res_file_path = os.path.join(exp_path, f"best_val_test_performance_results-{str_arguments}.txt")
+    pred_file_path = os.path.join(exp_path, f"best_val_test_predictions-{str_arguments}.txt")
+    
+    best_val_test_result_fl = open(res_file_path, "w")
+    best_val_test_prediction_fl = open(pred_file_path, "w")
+
+    # Data Loaders
+    train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(target_id, cfg['bs'])
+
+    # ---- 5. DYNAMIC MODEL LOADING ----
+    # This is the "Bugless" part. We map model names to classes and specific args.
     model = None
+    
     if model_name == "CNNModel1":
-        model = CNNModel1(fully_layer_1, fully_layer_2, drop_rate).to(device)
+        model = CNNModel1(
+            cfg['fc1'], 
+            cfg['fc2'], 
+            cfg['dropout']
+        ).to(device)
+        
     elif model_name == "ViT":
-        model = ViT(window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,embed_dim,depths,mlp_ratio,2).to(device)
+        # For complex models, you can pass parameters explicitly or using **cfg
+        # if the model arguments match your dictionary keys exactly.
+        model = ViT(
+            cfg['window_size'],
+            cfg['hidden_size'],
+            cfg['attention_probs_dropout_prob'],
+            cfg['drop_path_rate'],
+            cfg['dropout'],
+            cfg['layer_norm_eps'],
+            cfg['encoder_stride'],
+            cfg['embed_dim'],
+            cfg['depths'],
+            cfg['mlp_ratio'],
+            num_classes=2
+        ).to(device)
+
+    else:
+        raise ValueError(f"Model '{model_name}' is not recognized.")
+    # ---- 6. OPTIMIZER, SCHEDULER, CRITERION ----
+    n_epoch = cfg['epoch']
+    learning_rate = float(cfg['learning_rate'])
+    muon_lr = float(cfg.get('muon_lr')) 
+    end_learning_rate_factor = cfg.get('end_learning_rate_factor', None)
 
     if use_muon: 
         if model_name=="ViT":
@@ -234,7 +292,6 @@ def train_validation_test_training(
     if scheduler:
         if not end_learning_rate_factor:
             end_learning_rate_factor = 0.2
-
         scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=end_learning_rate_factor, total_iters=n_epoch)
             
 
@@ -244,6 +301,9 @@ def train_validation_test_training(
     best_val_mcc_score, best_test_mcc_score = 0.0, 0.0
     best_val_test_performance_dict = dict()
     best_val_test_performance_dict["MCC"] = 0.0
+
+    best_test_performance_dict = {}
+    best_test_predictions = ""
 
     best_val_roc_auc = 0.0
 
@@ -283,7 +343,7 @@ def train_validation_test_training(
             optimizer.step()
 
            
-            # ✅ Wandb log at every step
+            # Wandb log at every step
             wandb.log({"Loss/train_step": loss.item(), "step": global_step})
 
             global_step += 1  # Increment global step
@@ -298,8 +358,8 @@ def train_validation_test_training(
         training_perf_dict = dict()
         try:
             training_perf_dict = prec_rec_f1_acc_mcc(all_training_labels, all_training_preds)
-        except:
-            print("There was a problem during training performance calculation!")
+        except Exception as e:
+            print(f"Problem during training performance calculation! {e}")
         
         training_roc_auc = roc_auc_score(all_training_labels, np.array(all_training_probs)[:, 1])
         training_pr_auc = average_precision_score(all_training_labels, np.array(all_training_probs)[:, 1])
@@ -309,30 +369,37 @@ def train_validation_test_training(
         for metric, value in training_perf_dict.items():
             wandb.log({f"Train/{metric}": value, "epoch": epoch})
 
-
         model.eval()
 
-        # Save the model checkpoint to resume training later
+        # Save the model checkpoint
         torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'steps': global_step,
-            }, os.path.join(trained_models_path,experiment_name, target_id+"_"+ str_arguments+'-checkpoint.pth'))
-        
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'steps': global_step,
+        }, os.path.join(trained_models_path, experiment_name, target_id + "_" + str_arguments + '-checkpoint.pth'))
+
         with torch.no_grad():
             print("Validation mode:", not model.training)
 
-            total_val_loss, total_val_count, all_val_comp_ids, all_val_labels, val_predictions,val_pred_probs = calculate_val_test_loss(model, criterion, valid_loader, device)
+            # --- VALIDATION ---
+            total_val_loss, total_val_count, raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs = calculate_val_test_loss(model, criterion, valid_loader, device)
 
+            all_val_comp_ids, all_val_labels, val_predictions, val_pred_probs = aggregate_predictions(
+                raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs
+            )
+            
             val_perf_dict = dict()
             val_perf_dict["MCC"] = 0.0
+            val_predictions_tensor = torch.tensor(val_predictions)
+            all_val_labels_tensor = torch.tensor(all_val_labels)
+            
             try:
-                val_perf_dict = prec_rec_f1_acc_mcc(all_val_labels, val_predictions)
-            except:
-                print("There was a problem during validation performance calculation!")
+                val_perf_dict = prec_rec_f1_acc_mcc(all_val_labels_tensor, val_predictions_tensor)
+            except Exception as e:
+                print(f"There was a d during validation performance calculation: {e}")
 
-
+            
             val_roc_auc = roc_auc_score(all_val_labels, np.array(val_pred_probs)[:, 1])
             val_pr_auc = average_precision_score(all_val_labels, np.array(val_pred_probs)[:, 1])
             val_perf_dict["ROC AUC"] = val_roc_auc
@@ -341,16 +408,21 @@ def train_validation_test_training(
             for metric, value in val_perf_dict.items():
                 wandb.log({f"Validation/{metric}": value, "epoch": epoch})
 
-            total_test_loss, total_test_count, all_test_comp_ids, all_test_labels, test_predictions,test_pred_probs = calculate_val_test_loss(
+            total_test_loss, total_test_count, raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs = calculate_val_test_loss(
                 model, criterion, test_loader, device)
+
+            all_test_comp_ids, all_test_labels, test_predictions, test_pred_probs = aggregate_predictions(
+                raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs
+            )
 
             test_perf_dict = dict()
             test_perf_dict["MCC"] = 0.0
+            test_predictions_tensor = torch.tensor(val_predictions)
+            all_test_labels_tensor = torch.tensor(all_val_labels)
             try:
-                test_perf_dict = prec_rec_f1_acc_mcc(all_test_labels, test_predictions)
-            except:
-                print("There was a problem during test performance calculation!")
-
+                test_perf_dict = prec_rec_f1_acc_mcc(all_test_labels_tensor, test_predictions_tensor)
+            except Exception as e:
+                print(f"There was a problem during test performance calculation: {e}")
 
             test_roc_auc = roc_auc_score(all_test_labels, np.array(test_pred_probs)[:, 1])
             test_pr_auc = average_precision_score(all_test_labels, np.array(test_pred_probs)[:, 1])
