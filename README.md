@@ -1,11 +1,11 @@
 # DEEPScreen2: Deep Learning for Drug-Target Interaction Prediction
 
-Computational models for drug–target interaction (DTI) prediction aim to reduce the cost of experimental screening, but often require complex molecular representations and long development cycles. Here we present DEEPScreen++, a modular, open-source framework that performs DTI prediction directly from RDKit-generated 2D molecular images, expanded with augmentation, using convolutional neural network and vision transformer backbones. DEEPScreen++ streamlines data curation, image generation, training and inference into an end-to-end pipeline that can be completed within seven days for a new target on standard hardware. Prospective applications to de novo design and drug repurposing identified two experimentally confirmed active molecules and two repurposed drugs, respectively. DEEPScreen++ thus demonstrates that simple image-based models can match or exceed traditional descriptor-based approaches for high-accuracy DTI prediction and rapid hypothesis generation.
+Computational models for drug–target interaction (DTI) prediction aim to reduce the cost of experimental screening, but often require complex molecular representations and long development cycles. Here we present DEEPScreen2, a modular, open-source framework that performs DTI prediction directly from RDKit-generated 2D molecular images, expanded with augmentation, using convolutional neural network and vision transformer backbones. DEEPScreen2 streamlines data curation, image generation, training and inference into an end-to-end pipeline that can be completed within seven days for a new target on standard hardware. Prospective applications to de novo design and drug repurposing identified two experimentally confirmed active molecules and two repurposed drugs, respectively. DEEPScreen2 thus demonstrates that simple image-based models can match or exceed traditional descriptor-based approaches for high-accuracy DTI prediction and rapid hypothesis generation.
 
 <p align="center">
   <img src="assets/deepscreen_system.png" alt="DeepScreen System"/>
   <br>
-  <em><strong>Figure 1.</strong> DEEPScreen++ system showcased over CNN architecture and image augmentation.</em>
+  <em><strong>Figure 1.</strong> DEEPScreen2 system showcased over CNN architecture and image augmentation.</em>
 </p>
 
 ## Key Features
@@ -157,7 +157,7 @@ If you use DEEPScreen2 in your research, please cite our relevant works:
 
 ```bibtex
 @misc{unlu2025deepscreen,
-  title={DEEPScreen++: A Modular Image-Based Deep Learning Framework for Drug–Target Interaction Prediction},
+  title={DEEPScreen2: A Modular Image-Based Deep Learning Framework for Drug–Target Interaction Prediction},
   author={{\"U}nl{\"u}, Atabey and {\c{C}}al{\i}{\c{s}}kan, Mehmet Furkan and {\.I}nan, Furkan Necati and {\"O}rer, Kemal and {\"O}rer, Kerem and Do{\u{g}}an, Tunca},
   year={2025},
   howpublished={\url{https://github.com/HUBioDataLab/DEEPScreen2}}
