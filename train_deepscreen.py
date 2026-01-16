@@ -9,7 +9,7 @@ import numpy as np
 import torch.nn as nn
 from torch.optim.lr_scheduler import LinearLR
 
-from models import CNNModel1, ViT
+from models import CNNModel1, ViT,YOLOv11Classifier
 
 from data_processing import get_train_test_val_data_loaders
 from evaluation_metrics import prec_rec_f1_acc_mcc, get_list_of_scores
@@ -243,6 +243,10 @@ def train_validation_test_training(
             num_classes=2
         ).to(device)
 
+    elif model_name == "YOLOv11":
+        
+        model = YOLOv11Classifier(num_classes=2,model_size="yolo11m").to(device)
+        
     else:
         raise ValueError(f"Model '{model_name}' is not recognized.")
     # ---- 6. OPTIMIZER, SCHEDULER, CRITERION ----
@@ -250,6 +254,7 @@ def train_validation_test_training(
     learning_rate = float(cfg['learning_rate'])
     muon_lr = float(cfg.get('muon_lr')) 
     end_learning_rate_factor = cfg.get('end_learning_rate_factor', None)
+    
 
     if use_muon: 
         if model_name=="ViT":
@@ -262,6 +267,42 @@ def train_validation_test_training(
                 dict(params=hidden_gains_biases+nonhidden_params, use_muon=False,
                     lr=learning_rate, betas=(0.9, 0.95),),
             ]
+
+        elif model_name == "YOlOv11":
+
+            backbone_neck = model.model[:-1]
+            head = model.model[-1]
+
+            hidden_weights = []
+            hidden_gains_biases = []
+
+            for m in backbone_neck:
+                for p in m.parameters():
+                    if p.ndim >= 2:
+                        hidden_weights.append(p)
+                    else:
+                        hidden_gains_biases.append(p)
+
+            head_params = list(head.parameters())
+
+            param_groups = [
+                dict(
+                    params=hidden_weights,
+                    use_muon=True,
+                    lr=muon_lr
+                ),
+                dict(
+                    params=hidden_gains_biases + head_params,
+                    use_muon=False,
+                    lr=learning_rate,
+                    betas=(0.9, 0.95)
+                )
+            ]
+
+            optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
+
+
+
         else:
 
             hidden_weights = [p for p in model.parameters() if p.ndim >= 2]
@@ -310,6 +351,8 @@ def train_validation_test_training(
     early_stopping_counter = 0
 
     global_step = start_step  # Track steps across all epochs
+
+
     for e in range(n_epoch):
         epoch = e + start_epoch
         total_training_count = 0
