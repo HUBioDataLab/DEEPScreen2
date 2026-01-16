@@ -16,3 +16,4 @@ scipy
 rdkit
 pytdc
 tqdm
+ultralytics
