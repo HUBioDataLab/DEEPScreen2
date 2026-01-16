@@ -611,12 +611,12 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         inact_ids = pandas_df[pandas_df["target"] == 0]["molecule_chembl_id"].tolist()
         act_inact_dict = {targetid: [act_ids, inact_ids]}
         
-        tdc_split_dict = {}
+        
 
         if dataset != "moleculenet": # Creating splits given by tdc
-            
+            tdc_split_dict = {}
             # This code sequence fixes tdc's mislabels.
-            if no_fix_tdc:
+            if no_fix_tdc: 
                 for split_name in ["train", "valid", "test"]:
                     for m in split[split_name].itertuples(index=False):
                         # Use canonical SMILES or Drug_ID as before
@@ -624,7 +624,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                             pandas_df["Drug_ID"] == m.Drug_ID, "molecule_chembl_id"
                         ].values[0]
                         
-                        act_or_inact = "act" if m.target == 1 else "inact"
+                        act_or_inact = "act" if m.Y == 1 else "inact"
                         tdc_split_dict[chembl_id] = (split_name, act_or_inact)
             else:
                 for m in pandas_df.itertuples(index=False): 
@@ -679,7 +679,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             if ok_train and ok_valid and ok_test:
                 print("✔ Split control checked: Train/Valid/Test numbers match!")
             else:
-                print("⚠ WARNING: Mismatch in split sizes!")
+                print("⚠ WARNING: Mismatch in split sizes! This is likely due to fixing of mislabels in TDC dataset.")
 
         moleculenet_dict = {}
         for i, row_ in pandas_df.iterrows():
@@ -766,6 +766,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             training_inact_comp_id_list = inact_list[:inact_training_size]
             val_inact_comp_id_list = inact_list[inact_training_size:inact_training_size+inact_val_size]
             test_inact_comp_id_list = inact_list[inact_training_size+inact_val_size:]
+            
         else:
 
             training_act_comp_id_list = []

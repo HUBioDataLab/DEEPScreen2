@@ -309,7 +309,7 @@ async def download_target_async(args):
     assay_types = args.assay_type.split(',')
     
     # Process targets in batches for better memory management
-    batch_size = args.batch_size
+    batch_size = args.target_process_batch_size
     
     async with await downloader.create_session() as session:
         for i in range(0, len(target_ids), batch_size):
@@ -377,7 +377,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_cores', type=int, default=multiprocessing.cpu_count() - 1, help="Maximum number of CPU cores to use")
     parser.add_argument('--smiles_input_file', type=str, help="Path to txt file containing ChEMBL IDs")
     parser.add_argument('--max_concurrent', type=int, default=50, help="Maximum number of concurrent requests")
-    parser.add_argument('--batch_size', type=int, default=10, help="Number of targets to process in each batch")
+    parser.add_argument('--target_process_batch_size', type=int, default=10, help="Number of targets to process in each batch")
 
     args = parser.parse_args()
 

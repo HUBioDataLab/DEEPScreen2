@@ -69,8 +69,8 @@ parser.add_argument(
 
 parser.add_argument(
     '--no_fix_tdc',
-    action='store_false',
-    help='Disable the custom fixation for the broken labels in tdc')
+    action='store_true',
+    help='Disable custom fixation for the broken labels in tdc (fixing is enabled by default)')
 
 
 parser.add_argument(
@@ -134,6 +134,12 @@ parser.add_argument(
     '--smiles_input_file',
     type=str,
     help="Path to txt file containing ChEMBL IDs")
+
+parser.add_argument(
+    '--target_process_batch_size',
+    type=int, 
+    default=10, 
+    help="Number of targets to process in each batch")
 
 
 # ============================
