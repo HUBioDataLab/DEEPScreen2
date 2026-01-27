@@ -682,7 +682,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         act_list, inact_list = act_inact_dict[tar]
 
 
-        if (negative_enrichment and not dataset !="moleculenet" and not dataset !="tdc_adme" and not dataset !="tdc_tox"):
+        if (negative_enrichment and dataset !="moleculenet" and dataset !="tdc_adme" and dataset !="tdc_tox"):
 
             print("Before negative enrichment, length of the act and inact list")
             print("len act :" + str(len(act_list)))
