@@ -586,7 +586,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             pandas_df = pd.read_csv(activity_data)        
             pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
             pandas_df = pandas_df[["canonical_smiles", "target"]]
-            print("no 1")
         else:
             if dataset == "tdc_adme":
                 data = ADME(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
@@ -594,16 +593,13 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                 data = Tox(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
 
             split = data.get_split()
-            # split["train"]["split"] = "train"
-            # split["valid"]["split"] = "valid"
-            # split["test"]["split"] = "test" alternative method
-
+            split["train"]["split"] = "train"
+            split["valid"]["split"] = "valid"
+            split["test"]["split"] = "test" 
             pandas_df = pd.concat([split["train"],split["valid"],split["test"]])
-            activity_data = pandas_df
 
-            pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
-            pandas_df = pandas_df[["Drug_ID","canonical_smiles", "target"]].copy()
-            pandas_df = pandas_df.drop_duplicates(subset=["canonical_smiles","Drug_ID"], keep="first") # Drop duplicate rows that contain same smiles representation more than once
+            pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-2]: "target"}, inplace=True)
+            pandas_df = pandas_df[["Drug_ID","canonical_smiles", "target","split"]].copy()
 
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
 
@@ -611,22 +607,17 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         inact_ids = pandas_df[pandas_df["target"] == 0]["molecule_chembl_id"].tolist()
         act_inact_dict = {targetid: [act_ids, inact_ids]}
         
-        
 
         if dataset != "moleculenet": # Creating splits given by tdc
             tdc_split_dict = {}
             # This code sequence fixes tdc's mislabels.
             if no_fix_tdc: 
-                for split_name in ["train", "valid", "test"]:
-                    for m in split[split_name].itertuples(index=False):
-                        # Use canonical SMILES or Drug_ID as before
-                        chembl_id = pandas_df.loc[
-                            pandas_df["Drug_ID"] == m.Drug_ID, "molecule_chembl_id"
-                        ].values[0]
-                        
-                        act_or_inact = "act" if m.Y == 1 else "inact"
-                        tdc_split_dict[chembl_id] = (split_name, act_or_inact)
+                for m in pandas_df.itertuples(index=False):
+                    # Use canonical SMILES or Drug_ID as before
+                    act_or_inact = "act" if m.target == 1 else "inact"
+                    tdc_split_dict[m.molecule_chembl_id] = (m.split, act_or_inact)
             else:
+                pandas_df = pandas_df.drop_duplicates(subset=["canonical_smiles","Drug_ID"], keep="first") # Drop duplicate rows that contain same smiles representation more than once
                 for m in pandas_df.itertuples(index=False): 
                     m_drug = m.canonical_smiles
                     m_drug_id = m.Drug_ID  
@@ -659,7 +650,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
                     act_or_inact = "act" if m.target == 1 else "inact"
                     tdc_split_dict[m.molecule_chembl_id] = (train_test_val_situation, act_or_inact)
-                        
+        
             train_count = sum(1 for v in tdc_split_dict.values() if v[0] == "train")
             valid_count = sum(1 for v in tdc_split_dict.values() if v[0] == "valid")
             test_count  = sum(1 for v in tdc_split_dict.values() if v[0] == "test")
@@ -687,7 +678,6 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             smi = row_["canonical_smiles"]
             moleculenet_dict[cid] = ["dummy1", "dummy2", "dummy3", smi]
         chemblid_smiles_dict = moleculenet_dict
-        print("no 2")
     else:
         df = pd.read_csv(activity_data)
     

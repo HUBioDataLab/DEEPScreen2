@@ -1,4 +1,4 @@
-method: bayes
+method: grid
 metric:
   name: val_loss
   goal: minimize
