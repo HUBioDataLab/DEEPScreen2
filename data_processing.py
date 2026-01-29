@@ -1,12 +1,15 @@
 # data_processing.py
-from PIL import Image
-
-import re
 import os
+import warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
+warnings.filterwarnings('ignore')
+
+from PIL import Image
+import re
 import cv2
 import json
 import random
-import warnings
 import numpy as np
 import pandas as pd
 from rdkit import Chem
@@ -28,7 +31,6 @@ import requests
 from io import StringIO
 from pathlib import Path
 
-warnings.filterwarnings(action='ignore')
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split(os.sep)[0]
 
@@ -36,8 +38,6 @@ project_file_path = os.path.join(current_path_beginning,"DEEPScreen"+current_pat
 training_files_path = os.path.join(project_file_path,"training_files")
 result_files_path = os.path.join(project_file_path,"result_files")
 trained_models_path = os.path.join(project_file_path,"trained_models")
-
-IMG_SIZE = 300
 
 
 def get_chemblid_smiles_inchi_dict(smiles_inchi_fl):
@@ -52,16 +52,6 @@ def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rotations, target_predic
     if mol is None:
         print(f"Invalid SMILES: {smiles}")
         return
-    
-    """
-        Draw.DrawingOptions.atomLabelFontSize = 55
-        
-        
-        Draw.DrawingOptions.dotsPerAngstrom = 100
-        
-        
-        Draw.DrawingOptions.bondLineWidth = 1.5
-    """
     
     base_path = os.path.join(target_prediction_dataset_path, tar_id, "imgs")
     
@@ -105,64 +95,44 @@ def initialize_dirs(targetid , target_prediction_dataset_path):
     if not os.path.exists(os.path.join(target_prediction_dataset_path, targetid, "imgs")):
         os.makedirs(os.path.join(target_prediction_dataset_path, targetid, "imgs"))
 
-    f = open(os.path.join(target_prediction_dataset_path, targetid, "prediction_dict.json"), "w+")
-    json_dict = {"prediction": list()}
-    json_object = json.dumps(json_dict)
-    f.write(json_object)
-    f.close()
-
 def process_smiles(smiles_data,augmentation_angle):
-    current_smiles, compound_id, target_prediction_dataset_path, targetid,act_inact,test_val_train_situation = smiles_data
+
+    current_smiles, compound_id, target_prediction_dataset_path, targetid,act_inact = smiles_data
     rotations = [(0, "_0"), *[(angle, f"_{angle}") for angle in range(augmentation_angle, 360, augmentation_angle)]]
-    local_dict = {test_val_train_situation: []}
     try:
 
         save_comp_imgs_from_smiles(targetid, compound_id, current_smiles, rotations, target_prediction_dataset_path)
 
-        if  os.path.exists(os.path.join(target_prediction_dataset_path, targetid, "imgs","{}_0.png".format(compound_id))):
+        if not os.path.exists(os.path.join(target_prediction_dataset_path, targetid, "imgs","{}_0.png".format(compound_id))):
 
-            for i in range(0,360,augmentation_angle):
-                local_dict[test_val_train_situation].append([compound_id + "_" + str(i), int(act_inact)])
-           
+            print(f"{compound_id} image generation failed.")
+            return compound_id
+        
         else:
-            print(compound_id," cannot create image")
+            return None
+           
     except Exception as e:
-        print(f"Compound: {compound_id}, Target: {targetid}")
-        print(f"Error type: {type(e).__name__}, Message: {e}")
-        
-        
-    return local_dict
-    
-def generate_images(smiles_file, targetid, max_cores,tar_train_val_test_dict,target_prediction_dataset_path,augmentation_angle):
 
-    smiles_list = pd.read_csv(smiles_file)["canonical_smiles"].tolist()
-    compound_ids = pd.read_csv(smiles_file)["molecule_chembl_id"].tolist()
-    act_inact_situations = pd.read_csv(smiles_file)["act_inact_id"].tolist()
-    test_val_train_situations = pd.read_csv(smiles_file)["test_val_train"].tolist()
-    smiles_data_list = [(smiles, compound_ids[i], target_prediction_dataset_path, targetid,act_inact_situations[i],test_val_train_situations[i]) for i, smiles in enumerate(smiles_list)]
-    
-    start_time = time.time()
+        print(f"Error for {compound_id}: {e}")
+        return compound_id
 
+    
+def generate_images(smiles_file, targetid, max_cores, target_prediction_dataset_path, augmentation_angle):
+    df = pd.read_csv(smiles_file)
+    smiles_data_list = [(row['canonical_smiles'], row['molecule_chembl_id'], target_prediction_dataset_path, targetid, row['act_inact_id']) for _, row in df.iterrows()]
+    
+    black_list = []
     with ProcessPoolExecutor(max_workers=max_cores) as executor:
-        futures = [
-            executor.submit(process_smiles, s, augmentation_angle)
-            for s in smiles_data_list
-        ]
-        
-        results = []
-        for f in tqdm(as_completed(futures), total=len(futures), desc=f"Processing SMILES (angle={augmentation_angle})"):
-            results.append(f.result())
+        futures = [executor.submit(process_smiles, s, augmentation_angle) for s in smiles_data_list]
+        for f in tqdm(as_completed(futures), total=len(futures), desc="Generating Images"):
+            failed_id = f.result()
+            if failed_id:
+                black_list.append(failed_id)
 
-    end_time = time.time()
-
-    print("result" , len(results))
-    for result in results:
-        for key, value in result.items():
-            tar_train_val_test_dict[key].extend(value)
-
-    print(f"Time taken for all: {end_time - start_time}")
-    total_image_count = len(smiles_list) * len([(0, ""), *[(angle, f"_{angle}") for angle in range(augmentation_angle, 360, augmentation_angle)]])
-    print(f"Total images generated: {total_image_count}")
+    if black_list:
+        df = df[~df['molecule_chembl_id'].isin(black_list)]
+        df.to_csv(smiles_file, index=False)
+    return df
 
 
 def handle_group(g):
@@ -269,56 +239,44 @@ def get_act_inact_list_for_all_targets(fl):
                         act_inact_dict[chembl_target_id][1] = inact_list
     return act_inact_dict
 
-def create_act_inact_files_for_targets(fl, target_id, chembl_version, pchembl_threshold,scaffold, target_prediction_dataset_path=None):
-    # Create target directory if it doesn't exist
+
+
+
+def create_act_inact_files_for_targets(fl, target_id, pchembl_threshold, target_prediction_dataset_path):
+    """
+    Groups compounds into active and inactive lists based on pChEMBL threshold 
+    and saves them in a format compatible with get_act_inact_list_for_all_targets.
+    """
+    # Create target directory
     target_dir = os.path.join(target_prediction_dataset_path, target_id)
     os.makedirs(target_dir, exist_ok=True)
     
-    # Read the initial dataframe
-    pre_filt_chembl_df = pd.read_csv(fl, sep=",", index_col=False)
+    # Read the preprocessed activity data
+    df = pd.read_csv(fl, sep=",", index_col=False)
     
-    # Add active/inactive labels based on pchembl_threshold
-    pre_filt_chembl_df['activity_label'] = (pre_filt_chembl_df['pchembl_value'] >= pchembl_threshold).astype(int)
+    # Separate actives and inactives based on the threshold
+    # Thresholding: Active >= threshold, Inactive < threshold
+    act_rows = df[df['pchembl_value'] >= pchembl_threshold]['molecule_chembl_id'].unique().tolist()
+    inact_rows = df[df['pchembl_value'] < pchembl_threshold]['molecule_chembl_id'].unique().tolist()
     
-    # Now split the labeled data
-    train_ids, val_ids, test_ids = train_val_test_split(pre_filt_chembl_df,scaffold ,split_ratios=(0.8, 0.1, 0.1))
+    # Define file path for the combined TSV
+    combined_file_path = os.path.join(target_dir, f"{target_id}_preprocessed_filtered_act_inact_comps_pchembl_{pchembl_threshold}.tsv")
+    
+    # Write the file in the specific order your loader expects:
+    # Line 1: TargetID_act \t comp1,comp2...
+    # Line 2: TargetID_inact \t comp3,comp4...
+    with open(combined_file_path, 'w') as f:
+        f.write(f"{target_id}_act\t{','.join(act_rows)}\n")
+        f.write(f"{target_id}_inact\t{','.join(inact_rows)}\n")
+        
+    # Also save a count file for quick manual inspection
+    count_file_path = os.path.join(target_dir, f"{target_id}_preprocessed_filtered_act_inact_count_pchembl_{pchembl_threshold}.tsv")
+    with open(count_file_path, 'w') as f:
+        f.write(f"{target_id}\t{len(act_rows)}\t{len(inact_rows)}\n")
+    
+    print(f"--- Classification complete for {target_id} | Saved to: {combined_file_path} ---")
+    return combined_file_path
 
-    # Create separate dataframes for train/val/test
-    train_df = pre_filt_chembl_df[pre_filt_chembl_df['molecule_chembl_id'].isin(train_ids)]
-    val_df = pre_filt_chembl_df[pre_filt_chembl_df['molecule_chembl_id'].isin(val_ids)]
-    test_df = pre_filt_chembl_df[pre_filt_chembl_df['molecule_chembl_id'].isin(test_ids)]
-
-    # Process and write files for each split
-    for split_name, split_df in [('train', train_df), ('val', val_df), ('test', test_df)]:
-        # Group by activity label
-        act_rows = split_df[split_df['activity_label'] == 1]['molecule_chembl_id'].tolist()
-        inact_rows = split_df[split_df['activity_label'] == 0]['molecule_chembl_id'].tolist()
-        
-        # Create the output files
-        comp_file_path = os.path.join(target_dir, 
-            f"{chembl_version}_{split_name}_preprocessed_filtered_act_inact_comps_pchembl_{pchembl_threshold}.tsv")
-        count_file_path = os.path.join(target_dir,
-            f"{chembl_version}_{split_name}_preprocessed_filtered_act_inact_count_pchembl_{pchembl_threshold}.tsv")
-        
-        # Write the files
-        with open(comp_file_path, 'w') as comp_file:
-            comp_file.write(f"{target_id}_act\t{','.join(act_rows)}\n")
-            comp_file.write(f"{target_id}_inact\t{','.join(inact_rows)}\n")
-            
-        with open(count_file_path, 'w') as count_file:
-            count_file.write(f"{target_id}\t{len(act_rows)}\t{len(inact_rows)}\n")
-    
-    # Create the combined file that get_act_inact_list_for_all_targets expects
-    combined_file_path = os.path.join(target_dir, 
-        f"{chembl_version}_preprocessed_filtered_act_inact_comps_pchembl_{pchembl_threshold}.tsv")
-    
-    with open(combined_file_path, 'w') as combined_file:
-        # Combine all actives and inactives
-        all_act_rows = pre_filt_chembl_df[pre_filt_chembl_df['activity_label'] == 1]['molecule_chembl_id'].tolist()
-        all_inact_rows = pre_filt_chembl_df[pre_filt_chembl_df['activity_label'] == 0]['molecule_chembl_id'].tolist()
-        
-        combined_file.write(f"{target_id}_act\t{','.join(all_act_rows)}\n")
-        combined_file.write(f"{target_id}_inact\t{','.join(all_inact_rows)}\n")
 
 def create_act_inact_files_similarity_based_neg_enrichment_threshold(act_inact_fl, blast_sim_fl, sim_threshold):
 
@@ -703,9 +661,11 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
         chemblid_smiles_dict = get_chemblid_smiles_inchi_dict(activity_data) 
     
-        create_act_inact_files_for_targets(activity_data, targetid, "chembl", pchembl_threshold,scaffold, target_prediction_dataset_path) 
+        create_act_inact_files_for_targets(activity_data, targetid, pchembl_threshold, target_prediction_dataset_path) 
 
-        act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, "chembl", pchembl_threshold))
+        act_inact_dict = get_act_inact_list_for_all_targets("{}/{}/{}_preprocessed_filtered_act_inact_comps_pchembl_{}.tsv".format(target_prediction_dataset_path, targetid, targetid, pchembl_threshold))
+
+        print("Total act inact number : ",len(act_inact_dict))
 
     for tar in act_inact_dict:
         
@@ -715,7 +675,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         act_list, inact_list = act_inact_dict[tar]
 
 
-        if (negative_enrichment and not dataset !="moleculenet" and not dataset !="tdc_adme" and not dataset !="tdc_tox"):
+        if (negative_enrichment and dataset !="moleculenet" and dataset !="tdc_adme" and dataset !="tdc_tox"):
 
             print("Before negative enrichment, length of the act and inact list")
             print("len act :" + str(len(act_list)))
@@ -737,58 +697,10 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         print("After subsampling, length of the act and inact list")
         print("len act :" + str(len(act_list)))
         print("len inact :" + str(len(inact_list)))
-        
 
-        if not (dataset == "tdc_adme" or dataset == "tdc_tox"): # If the dataset is from TDC, then the splits are already provided and molecules should be put accordingly.
-            random.shuffle(act_list)
-            random.shuffle(inact_list)
-
-            act_training_validation_size = int(0.8 * len(act_list))
-            act_training_size = int(0.8 * act_training_validation_size)
-            act_val_size = act_training_validation_size - act_training_size
-            training_act_comp_id_list = act_list[:act_training_size]
-            val_act_comp_id_list = act_list[act_training_size:act_training_size+act_val_size]
-            test_act_comp_id_list = act_list[act_training_size+act_val_size:]
-
-            inact_training_validation_size = int(0.8 * len(inact_list))
-            inact_training_size = int(0.8 * inact_training_validation_size)
-            inact_val_size = inact_training_validation_size - inact_training_size
-            training_inact_comp_id_list = inact_list[:inact_training_size]
-            val_inact_comp_id_list = inact_list[inact_training_size:inact_training_size+inact_val_size]
-            test_inact_comp_id_list = inact_list[inact_training_size+inact_val_size:]
-            
-        else:
-
-            training_act_comp_id_list = []
-            val_act_comp_id_list = []
-            test_act_comp_id_list = []
-            
-            training_inact_comp_id_list = []
-            val_inact_comp_id_list = []
-            test_inact_comp_id_list = []
-
-            for molecule, (split, act_or_inact) in tdc_split_dict.items():
-
-                if split == "train" and act_or_inact == "act":
-                    training_act_comp_id_list.append(molecule)
-                elif split == "train" and act_or_inact == "inact":
-                    training_inact_comp_id_list.append(molecule)
-                elif split == "valid" and act_or_inact == "act":
-                    val_act_comp_id_list.append(molecule)
-                elif split == "valid" and act_or_inact == "inact":
-                    val_inact_comp_id_list.append(molecule)
-                elif split == "test" and act_or_inact == "act":
-                    test_act_comp_id_list.append(molecule)
-                elif split == "test" and act_or_inact == "inact":
-                    test_inact_comp_id_list.append(molecule)
-        
-        print(tar, "all training act", len(act_list), len(training_act_comp_id_list), len(val_act_comp_id_list), len(test_act_comp_id_list))
-        print(tar, "all training inact", len(inact_list), len(training_inact_comp_id_list), len(val_inact_comp_id_list), len(test_inact_comp_id_list))
-        tar_train_val_test_dict = dict()
-        tar_train_val_test_dict["training"] = []
-        tar_train_val_test_dict["validation"] = []
-        tar_train_val_test_dict["test"] = []
-    
+        if max_cores > multiprocessing.cpu_count():
+            print(f"Warning: Maximum number of cores is {multiprocessing.cpu_count()}. Using maximum available cores.")
+            max_cores = multiprocessing.cpu_count()
 
         directory = os.path.join(target_prediction_dataset_path,targetid)
 
@@ -796,116 +708,228 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             os.makedirs(directory)
 
         file_name = "smilesfile.csv"
-        last_smiles_file = os.path.join(directory, file_name)
+        smiles_file_csv = os.path.join(directory, file_name)
 
-        with open(last_smiles_file, mode='w', newline='') as file:
+        smiles_file = smiles_file_csv
+
+        with open(smiles_file_csv, mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(["canonical_smiles", "molecule_chembl_id", "act_inact_id","test_val_train"])
+            writer.writerow(["canonical_smiles", "molecule_chembl_id", "act_inact_id"])
 
-        
-        for comp_id in training_act_comp_id_list:
-            with open(last_smiles_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([chemblid_smiles_dict[comp_id][3], comp_id, "1","training"])
-            
-        for comp_id in val_act_comp_id_list:
-            with open(last_smiles_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([chemblid_smiles_dict[comp_id][3], comp_id, "1","validation"])
-            
-        for comp_id in test_act_comp_id_list:
-            with open(last_smiles_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([chemblid_smiles_dict[comp_id][3], comp_id, "1","test"])
-            
-        for comp_id in training_inact_comp_id_list:
-            with open(last_smiles_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([chemblid_smiles_dict[comp_id][3], comp_id, "0","training"])
-            
-        for comp_id in val_inact_comp_id_list:
-            with open(last_smiles_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([chemblid_smiles_dict[comp_id][3], comp_id, "0","validation"])
-            
-        for comp_id in test_inact_comp_id_list:
-            with open(last_smiles_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([chemblid_smiles_dict[comp_id][3], comp_id, "0","test"])
+            for root_id in act_list:
+                try:
+                    smi = chemblid_smiles_dict[root_id][3]
+                    writer.writerow([smi, root_id, "1"])
+                except KeyError:
+                    continue
 
-
-        if max_cores > multiprocessing.cpu_count():
-            print(f"Warning: Maximum number of cores is {multiprocessing.cpu_count()}. Using maximum available cores.")
-            max_cores = multiprocessing.cpu_count()
-
-        smiles_file = last_smiles_file
+            for root_id in inact_list:
+                try:
+                    smi = chemblid_smiles_dict[root_id][3]
+                    writer.writerow([smi, root_id, "0"])
+                except KeyError:
+                    continue
         
         initialize_dirs(targetid , target_prediction_dataset_path)
-        generate_images(smiles_file , targetid , max_cores , tar_train_val_test_dict,target_prediction_dataset_path, augmentation_angle)
 
-        random.shuffle(tar_train_val_test_dict["training"])
-        random.shuffle(tar_train_val_test_dict["validation"])
-        random.shuffle(tar_train_val_test_dict["test"])
+        generate_images(smiles_file, targetid, max_cores,target_prediction_dataset_path, augmentation_angle)
 
-        with open(os.path.join(target_prediction_dataset_path, tar, 'train_val_test_dict.json'), 'w') as fp:
-            json.dump(tar_train_val_test_dict, fp)
+        training_act_comp_id_list = []
+        val_act_comp_id_list = []
+        test_act_comp_id_list = []
+            
+        training_inact_comp_id_list = []
+        val_inact_comp_id_list = []
+        test_inact_comp_id_list = []
+
+        if not (dataset == "tdc_adme" or dataset == "tdc_tox"): # If the dataset is from TDC, then the splits are already provided and molecules should be put accordingly.
+            
+            (
+                training_act_comp_id_list,
+                val_act_comp_id_list,
+                test_act_comp_id_list,
+                training_inact_comp_id_list,
+                val_inact_comp_id_list,
+                test_inact_comp_id_list
+            ) = train_val_test_split(smiles_file, scaffold, augmentation_angle)
+
+        
+            print("Train act len : ",len(training_act_comp_id_list))
+            print("Train inact len : ",len(training_inact_comp_id_list))
+            print("val act len : ",len(val_act_comp_id_list))
+            print("val inact len : ",len(val_inact_comp_id_list))
+            print("Test act len : ",len(test_act_comp_id_list))
+            print("Test inact len : ",len(test_inact_comp_id_list))
+            
+        else:
+
+            # Check for divisibility to avoid incomplete rotations
+            if 360 % augmentation_angle != 0:
+                raise ValueError(f"Error: 360 is not divisible by augmentation_angle ({augmentation_angle}).")
+            
+            cleaned_df = pd.read_csv(smiles_file)
+            valid_molecule_ids = set(cleaned_df['molecule_chembl_id'].tolist())
+
+
+            for molecule, (split, act_or_inact) in tdc_split_dict.items():
+                
+                # --- CRITICAL CHECK ---
+                # Skip the molecule if it was removed during generate_images (failed image creation)
+                if molecule not in valid_molecule_ids:
+                    print(f"Skipping {molecule}: Image was not generated successfully.")
+                    continue
+                # ----------------------
+
+                # Generate augmented IDs only for verified molecules
+                augmented_ids = [f"{molecule}_{i}" for i in range(0, 360, augmentation_angle)]
+
+                if split == "train" and act_or_inact == "act":
+                    training_act_comp_id_list.extend(augmented_ids)
+                elif split == "train" and act_or_inact == "inact":
+                    training_inact_comp_id_list.extend(augmented_ids)
+                elif split == "valid" and act_or_inact == "act":
+                    val_act_comp_id_list.extend(augmented_ids)
+                elif split == "valid" and act_or_inact == "inact":
+                    val_inact_comp_id_list.extend(augmented_ids)
+                elif split == "test" and act_or_inact == "act":
+                    test_act_comp_id_list.extend(augmented_ids)
+                elif split == "test" and act_or_inact == "inact":
+                    test_inact_comp_id_list.extend(augmented_ids)
+        
+        print(tar, "all training act", len(act_list), len(training_act_comp_id_list), len(val_act_comp_id_list), len(test_act_comp_id_list))
+        print(tar, "all training inact", len(inact_list), len(training_inact_comp_id_list), len(val_inact_comp_id_list), len(test_inact_comp_id_list))
+
+        # JSON objesini hazırlıyoruz
+        tar_train_val_test_dict = {
+            "training": [],
+            "validation": [],
+            "test": []
+        }
+
+        tar_train_val_test_dict["training"].extend([[cid, 1] for cid in training_act_comp_id_list])
+        tar_train_val_test_dict["training"].extend([[cid, 0] for cid in training_inact_comp_id_list])
        
-def train_val_test_split(smiles_file, scaffold_split,split_ratios=(0.8, 0.1, 0.1)):
+        tar_train_val_test_dict["validation"].extend([[cid, 1] for cid in val_act_comp_id_list])
+        tar_train_val_test_dict["validation"].extend([[cid, 0] for cid in val_inact_comp_id_list])
+        
+        tar_train_val_test_dict["test"].extend([[cid, 1] for cid in test_act_comp_id_list])
+        tar_train_val_test_dict["test"].extend([[cid, 0] for cid in test_inact_comp_id_list])
+
+    
+        print(f"Final Counts for {tar}:")
+        print(f"  Train: {len(tar_train_val_test_dict['training'])}")
+        print(f"  Val:   {len(tar_train_val_test_dict['validation'])}")
+        print(f"  Test:  {len(tar_train_val_test_dict['test'])}")
+
+        dict_output_path = os.path.join(target_prediction_dataset_path, tar, 'train_val_test_dict.json')
+        with open(dict_output_path, 'w') as fp:
+            json.dump(tar_train_val_test_dict, fp)
+
+
+
+def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_ratios=(0.8, 0.1, 0.1)):
     """
-    Split data into train/val/test sets using either random or scaffold-based splitting
-    
-    Args:
-        smiles_file: Path to CSV file containing SMILES and target data
-        target_column_number: Column index for target values (default=1) 
-        scaffold_split: Whether to use scaffold-based splitting (default=False)
-    
-    Returns:
-        Lists of compound IDs for train/val/test splits
+    Splits data into train, validation, and test sets. 
+    Ensures all rotations (augmented images) of a single molecule stay within the same set
+    to prevent data leakage during model training.
     """
-    df = smiles_file
-    df = df.sample(frac=1, random_state=42).reset_index(drop=True)  # Shuffle with fixed seed
+    # Defensive check: Ensure 360 is divisible by the angle
+    if 360 % augmentation_angle != 0:
+        raise ValueError(
+            f"Invalid augmentation_angle: {augmentation_angle}. "
+            f"360 must be perfectly divisible by the angle to ensure full rotation coverage."
+        )
+
+    # Load the cleaned dataset (only compounds with successful images)
+    df = pd.read_csv(smiles_file)
+
+    print("Splitting process started...")
+    print(f"Total compounds in pool: {len(df)}")
     
-    # Get SMILES and compound IDs
-    smiles = df["canonical_smiles"].tolist()
-    compound_ids = df["molecule_chembl_id"].tolist()
-    
+    # Identify root molecule IDs for actives (1) and inactives (0)
+    act_list = df[df['act_inact_id'] == 1]['molecule_chembl_id'].tolist()
+    inact_list = df[df['act_inact_id'] == 0]['molecule_chembl_id'].tolist()
+
+    print(f"Active root IDs: {len(act_list)}")
+    print(f"Inactive root IDs: {len(inact_list)}")
+
+    def expand_with_angles(id_list):
+        """Generates augmented ID strings (e.g., CHEMBL123_90) from a list of root IDs."""
+        augmented = []
+        for root_id in id_list:
+            for angle in range(0, 360, augmentation_angle):
+                augmented.append(f"{root_id}_{angle}")
+        return augmented
+
     if scaffold_split:
-        print("scaffold split")
-        # Create MoleculeDatapoints for scaffold splitting
-        molecule_list = [Chem.MolFromSmiles(smi) for smi in smiles]
-        train_indices, val_indices, test_indices = make_split_indices(molecule_list, 
-                                                                      split = "scaffold_balanced",
-                                                                      sizes=(split_ratios), seed=42)
-        train_df = df.iloc[train_indices[0]]
-        val_df = df.iloc[val_indices[0]]
-        test_df = df.iloc[test_indices[0]]
-
-        train_ids = train_df["molecule_chembl_id"].tolist()
-        val_ids = val_df["molecule_chembl_id"].tolist()
-        test_ids = test_df["molecule_chembl_id"].tolist()
+        print("--- Mode: Scaffold Balanced Split (Grouping by Molecule) ---")
+        all_root_ids = act_list + inact_list
+        # Retrieve SMILES for scaffold calculation from root IDs
+        smiles_list = [df[df['molecule_chembl_id'] == cid]['canonical_smiles'].values[0] for cid in all_root_ids]
+        labels = [1] * len(act_list) + [0] * len(inact_list)
         
+        df_root = pd.DataFrame({'molecule_chembl_id': all_root_ids, 'smiles': smiles_list, 'label': labels})
+        mols = [Chem.MolFromSmiles(s) for s in df_root['smiles']]
+        
+        # Chemprop v2.1+ returns a tuple of lists. 
+        # Indices might be nested depending on the environment, so we flatten if necessary.
+        indices = make_split_indices(mols, split="scaffold_balanced", sizes=split_ratios, seed=42)
+        
+        # Ensure indices are flat 1D lists to prevent 'Buffer wrong number of dimensions' error
+        train_idx = indices[0][0] if isinstance(indices[0][0], (list, np.ndarray)) else indices[0]
+        val_idx   = indices[1][0] if isinstance(indices[1][0], (list, np.ndarray)) else indices[1]
+        test_idx  = indices[2][0] if isinstance(indices[2][0], (list, np.ndarray)) else indices[2]
+        
+        # Map indices to dataframes
+        tr_df = df_root.iloc[train_idx]
+        vl_df = df_root.iloc[val_idx]
+        ts_df = df_root.iloc[test_idx]
+        
+        # Categorize root IDs by label within each split set
+        tr_act_roots = tr_df[tr_df['label'] == 1]['molecule_chembl_id'].tolist()
+        vl_act_roots = vl_df[vl_df['label'] == 1]['molecule_chembl_id'].tolist()
+        ts_act_roots = ts_df[ts_df['label'] == 1]['molecule_chembl_id'].tolist()
+        
+        tr_inact_roots = tr_df[tr_df['label'] == 0]['molecule_chembl_id'].tolist()
+        vl_inact_roots = vl_df[vl_df['label'] == 0]['molecule_chembl_id'].tolist()
+        ts_inact_roots = ts_df[ts_df['label'] == 0]['molecule_chembl_id'].tolist()
+
     else:
-        print("random split")
-        # Random split
-        n = len(df)
-        train_size = int(n * split_ratios[0])
-        val_size = int(n * split_ratios[1])
+        print("--- Mode: Full Random Split (Grouping by Molecule) ---")
+        # Shuffle root IDs so all rotations move together
+        random.shuffle(act_list)
+        random.shuffle(inact_list)
         
-        # Get random indices for train/val/test
-        indices = list(range(n))
-        random.shuffle(indices)
-        
-        # Split indices into train/val/test
-        train_indices = indices[:train_size]
-        val_indices = indices[train_size:train_size + val_size]
-        test_indices = indices[train_size + val_size:]
-        
-        # Get compound IDs for each split
-        train_ids = [compound_ids[i] for i in train_indices]
-        val_ids = [compound_ids[i] for i in val_indices] 
-        test_ids = [compound_ids[i] for i in test_indices]
+        def split_roots(lst):
+            n = len(lst)
+            t = int(n * split_ratios[0])
+            v = int(n * split_ratios[1])
+            # Basic proportional slicing
+            return lst[:t], lst[t:t+v], lst[t+v:]
 
-    return train_ids, val_ids, test_ids
+        # Perform split at the root molecule level
+        tr_act_roots, vl_act_roots, ts_act_roots = split_roots(act_list)
+        tr_inact_roots, vl_inact_roots, ts_inact_roots = split_roots(inact_list)
+
+    # FINAL STEP: Apply data augmentation to root IDs after the split is finalized.
+    # All rotations of a single molecule are guaranteed to exist in ONLY one set.
+    tr_act = expand_with_angles(tr_act_roots)
+    vl_act = expand_with_angles(vl_act_roots)
+    ts_act = expand_with_angles(ts_act_roots)
+    
+    tr_inact = expand_with_angles(tr_inact_roots)
+    vl_inact = expand_with_angles(vl_inact_roots)
+    ts_inact = expand_with_angles(ts_inact_roots)
+
+    print("-" * 35)
+    print(f"Augmented Train   (Act/Inact): {len(tr_act)} / {len(tr_inact)}")
+    print(f"Augmented Val     (Act/Inact): {len(vl_act)} / {len(vl_inact)}")
+    print(f"Augmented Test    (Act/Inact): {len(ts_act)} / {len(ts_inact)}")
+    print("-" * 35)
+
+    return tr_act, vl_act, ts_act, tr_inact, vl_inact, ts_inact
+
+
 
 
 class DEEPScreenDataset(Dataset):
@@ -916,7 +940,7 @@ class DEEPScreenDataset(Dataset):
         self.train_val_test_folds = json.load(open(os.path.join(self.dataset_path, "train_val_test_dict.json")))
 
         if train_val_test == "all":
-            self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds] # burada train val test folds olmamalı predictionun beklediği format bu olmayabilir burayı değiştir
+            self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds]
             self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds]
         else:
             self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds[train_val_test]]
