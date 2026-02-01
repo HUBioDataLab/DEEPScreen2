@@ -155,6 +155,27 @@ DEEPScreen2/
 
 *   **YOLO Support**: We are working on integrating YOLO-based object detection architectures for more interpretable feature localization on molecular images. Stay tuned!
 
+# ⚠️ Deterministic CUDA Warning
+
+This project enables deterministic behavior in PyTorch (e.g. via
+torch.use_deterministic_algorithms(True)).
+
+If you are running on CUDA ≥ 10.2, some GPU operations (notably matrix multiplications using CuBLAS) are not deterministic by default.
+Without additional configuration, PyTorch may raise a runtime error or produce non-reproducible results.
+
+To ensure deterministic behavior, you must set the following environment variable before running the code:
+
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+
+
+(Alternatively, :16:8 can be used for slightly better performance.)
+
+Important:
+This environment variable must be set before starting the Python process.
+Setting it inside the code will not work.
+
+If strict reproducibility is not required, deterministic mode can be disabled instead.
+
 ## Citations
 
 If you use DEEPScreen2 in your research, please cite our relevant works:

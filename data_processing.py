@@ -31,6 +31,14 @@ import requests
 from io import StringIO
 from pathlib import Path
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+g = torch.Generator()
+g.manual_seed(0)
+
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split(os.sep)[0]
 
@@ -550,7 +558,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             if dataset == "tdc_tox":
                 data = Tox(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
 
-            split = data.get_split()
+            split = data.get_split(method = "scaffold" if scaffold else "random", frac = [0.8,0.1,0.1],seed = 42)
             split["train"]["split"] = "train"
             split["valid"]["split"] = "valid"
             split["test"]["split"] = "test" 
@@ -975,13 +983,13 @@ def get_train_test_val_data_loaders(target_id, batch_size=32):
     test_dataset = DEEPScreenDataset(target_id, "test")
 
     train_sampler = SubsetRandomSampler(range(len(training_dataset)))
-    train_loader = DataLoader(training_dataset, batch_size=batch_size, sampler=train_sampler)
+    train_loader = DataLoader(training_dataset, batch_size=batch_size, sampler=train_sampler,generator=g,worker_init_fn=seed_worker)
     
     validation_sampler = SubsetRandomSampler(range(len(validation_dataset)))
-    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, sampler=validation_sampler)
+    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, sampler=validation_sampler,generator=g,worker_init_fn=seed_worker)
 
     test_sampler = SubsetRandomSampler(range(len(test_dataset)))
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler,generator=g,worker_init_fn=seed_worker)
 
     return train_loader, validation_loader, test_loader
 

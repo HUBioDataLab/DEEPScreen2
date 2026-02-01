@@ -25,6 +25,8 @@ import cv2
 import shutil
 
 from muon import SingleDeviceMuonWithAuxAdam
+torch.backends.cudnn.benchmark = False
+torch.use_deterministic_algorithms(True)
 
 warnings.filterwarnings(action='ignore')
 torch.manual_seed(123)
