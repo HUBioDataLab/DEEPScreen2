@@ -293,6 +293,8 @@ async def download_target_async(args):
     elif args.dataset == "tdc_tox":
         data = Tox(name = args.target_id,path = os.path.join("training_files","target_training_datasets",args.target_id))
         return
+    elif args.dataset == "tdc_benchmark":
+        return
     downloader = ChEMBLDownloader(max_concurrent=args.max_concurrent)
     base_dir = os.path.dirname(os.path.abspath(__file__))
     target_ids = []

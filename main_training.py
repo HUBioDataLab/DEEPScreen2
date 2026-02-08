@@ -245,6 +245,8 @@ parser.add_argument(
 args = None
 
 def sweep():
+    global args
+
     wandb.init(entity = args.entity_name,project=args.project_name, id=args.run_id, resume='allow')
 
     config = wandb.config
@@ -276,73 +278,80 @@ def sweep():
 
 def main():
     global args
-    args = parser.parse_args()
 
-    # Create platform-independent path
-    target_training_dataset_path = Path(args.training_dir).resolve()
-    target_training_dataset_path.mkdir(parents=True, exist_ok=True)
-    print("start donwload")
-    download_target(args)
-    print("end donwload")
+    repeat = 1
+    if args.dataset == "tdc_benchmark": 
+        repeat = 5
 
-    create_final_randomized_training_val_test_sets(
-        target_training_dataset_path / args.target_id / args.output_file,
-        args.max_cores,
-        args.scaffold,
-        args.target_id,
-        target_training_dataset_path,
-        args.dataset,
-        args.no_fix_tdc,
-        args.pchembl_threshold,
-        args.subsampling,
-        args.max_total_samples,
-        args.similarity_threshold,
-        args.negative_enrichment,
-        args.augment,
-        args.email)
-
-    config_folder = args.config_folder
-    if args.sweep:
-        # 1. Determine which YAML file to use
-        if "CNN" in args.model:
-            yaml_file = "sweep_cnn.yaml"
-        else:
-            yaml_file = "sweep_vit.yaml"
-
-        with open(os.path.join(config_folder,yaml_file)) as f:
-            sweep_config = yaml.safe_load(f)
-
-        sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
-
-        # Start sweep job.
-        wandb.agent(sweep_id, function=sweep)
+    for i in range(repeat):   
+        # Create platform-independent path
+        target_training_dataset_path = Path(args.training_dir).resolve()
+        target_training_dataset_path.mkdir(parents=True, exist_ok=True)
+        print("start donwload")
+        download_target(args)
+        print("end donwload")
         
-    
-    else:
+        create_final_randomized_training_val_test_sets(
+            target_training_dataset_path / args.target_id / args.output_file,
+            args.max_cores,
+            args.scaffold,
+            args.target_id,
+            target_training_dataset_path,
+            args.dataset,
+            args.no_fix_tdc,
+            args.pchembl_threshold,
+            args.subsampling,
+            args.max_total_samples,
+            args.similarity_threshold,
+            args.negative_enrichment,
+            args.augment,
+            args.email,
+            i)
 
-        with open(os.path.join(config_folder,"config.yaml")) as f:
-            config = yaml.safe_load(f)
-        train_validation_test_training(
-        args.target_id,
-        args.model,
-        config["parameters"],
-        args.en,
-        args.cuda,
-        args.run_id,
-        args.model_save,
-        args.project_name,
-        args.entity_name,
-        args.early_stopping,
-        args.patience,
-        args.warmup,
-        args.sweep,
-        scheduler=args.with_scheduler,
-        use_muon = args.muon
-        )
+        config_folder = args.config_folder
+        if args.sweep:
+            # 1. Determine which YAML file to use
+            if "CNN" in args.model:
+                yaml_file = "sweep_cnn.yaml"
+            else:
+                yaml_file = "sweep_vit.yaml"
+
+            with open(os.path.join(config_folder,yaml_file)) as f:
+                sweep_config = yaml.safe_load(f)
+
+            sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
+
+            # Start sweep job.
+            wandb.agent(sweep_id, function=sweep)
+            
+        
+        else:
+
+            with open(os.path.join(config_folder,"config.yaml")) as f:
+                config = yaml.safe_load(f)
+            train_validation_test_training(
+            args.target_id,
+            args.model,
+            config["parameters"],
+            args.en+f"_seed_{i}",
+            args.cuda,
+            args.run_id,
+            args.model_save,
+            args.project_name,
+            args.entity_name,
+            args.early_stopping,
+            args.patience,
+            args.warmup,
+            args.sweep,
+            scheduler=args.with_scheduler,
+            use_muon = args.muon
+            )
         
 
 
 if __name__ == "__main__":
+    args = parser.parse_args()
+
     main()
     
     

@@ -1,0 +1,48 @@
+tmuxları açarken kullandığım kod : 
+taskset -c 0-3 tmux new -s cnn_final
+taskset -c 4-6 tmux new -s cnn_muon_final
+taskset -c 7-10 tmux new -s vit_final
+taskset -c 11-14 tmux new -s vit_muon_final
+
+baz run başlatma kodu- runları başlatırken kullandığım ve diğer runlar için değiştirdiğim ilk kod
+python main_training.py --target_id CYP2C9_Substrate_CarbonMangels --dataset tdc_adme --project_name deepscreen_furkan_final_runs --en broken_cyp2c9_substrate_cnn --no_fix_tdc --cuda 0 --early_stopping !-with_scheduler --scaffold
+
+python main_training.py --target_id CYP2C9_Substrate_CarbonMangels --dataset tdc_benchmark --project_name deepscreen_furkan_final_runs --en broken_cyp2c9_substrate_vit_muon --no_fix_tdc --cuda 0 --early_stopping --model ViT --muon
+
+tdc broken runları yapılırken
+modelden emin ol --model ViT veya CNN yaz --muon yazdığı veya yazmadoğından emin ol
+scaffold yazmaya gerek yok default parametre giriyor
+model parametrelerini ayarla
+project name 2 olduğundan emin ol
+with_scheduler var mı emin ol
+dataset ismini değiştir
+--no_fix_tdc den emin ol
+run ismini ve experiment ismini değiştir
+
+runlar bitince modelleri güvenli bir yere kaydetmeyi unutma
+
+cyp broken
+
+cnn
+cnn_muon
+vit
+vit_muon
+
+cyp
+
+cnn
+cnn_muon
+vit
+vit_muon
+
+herg broken
+
+herg
+
+bbb broken
+
+bbb
+
+bioav broken
+
+bioav

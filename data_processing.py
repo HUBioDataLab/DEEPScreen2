@@ -30,6 +30,7 @@ random.seed(42)  # Very important for reproducibility
 import requests
 from io import StringIO
 from pathlib import Path
+from tdc.benchmark_group import admet_group
 
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
@@ -65,7 +66,7 @@ def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rotations, target_predic
     
     if not os.path.exists(base_path):
         os.makedirs(base_path)
-
+ 
     try:
         rotations_to_add = []
         for rot, suffix in rotations:
@@ -73,6 +74,7 @@ def save_comp_imgs_from_smiles(tar_id, comp_id, smiles, rotations, target_predic
                 continue
             else:
                 rotations_to_add.append((rot, suffix))
+            
         if len(rotations_to_add) == 0:
             return
         image = Draw.MolToImage(mol, size=(SIZE, SIZE))
@@ -542,11 +544,11 @@ def negative_enrichment_pipeline(chembl_target_id,
     return list(combined_inactives), chemblid_smiles_dict
 
 
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email):
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,run_seed):
     """
     split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
     """
-    if dataset == "moleculenet" or dataset =="tdc_adme" or dataset == "tdc_tox":
+    if dataset == "moleculenet" or dataset =="tdc_adme" or dataset == "tdc_tox" or dataset == "tdc_benchmark":
 
         if dataset == "moleculenet":
             pandas_df = pd.read_csv(activity_data)        
@@ -557,16 +559,34 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                 data = ADME(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
             if dataset == "tdc_tox":
                 data = Tox(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
+            if dataset == "tdc_adme" or dataset == "tdc_tox":   
+                split = data.get_split(method = "scaffold" if scaffold else "random", frac = [0.8,0.1,0.1],seed = 42)
+                split["train"]["split"] = "train"
+                split["valid"]["split"] = "valid"
+                split["test"]["split"] = "test" 
 
-            split = data.get_split(method = "scaffold" if scaffold else "random", frac = [0.8,0.1,0.1],seed = 42)
-            split["train"]["split"] = "train"
-            split["valid"]["split"] = "valid"
-            split["test"]["split"] = "test" 
+            if dataset == "tdc_benchmark":
+                split = {}
+                group = admet_group(path = 'data/')
+
+                benchmark = group.get(targetid)
+
+                name = benchmark['name']
+                train_val, test = benchmark['train_val'], benchmark['test']
+                train, valid = group.get_train_valid_split(benchmark = name, split_type = 'default', seed = run_seed)
+                split["train"] = train 
+                split["valid"] = valid
+                split["test"] = test
+                split["train"]["split"] = "train"
+                split["valid"]["split"] = "valid"
+                split["test"]["split"] = "test"
+
             pandas_df = pd.concat([split["train"],split["valid"],split["test"]])
-
+            pandas_df
             pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-2]: "target"}, inplace=True)
             pandas_df = pandas_df[["Drug_ID","canonical_smiles", "target","split"]].copy()
 
+        pandas_df = pandas_df.sort_values(by="canonical_smiles") # This ensures consistent ordering and giving same molecule_chembl_id to molecules across different seeds
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
 
         act_ids = pandas_df[pandas_df["target"] == 1]["molecule_chembl_id"].tolist()
@@ -683,7 +703,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         act_list, inact_list = act_inact_dict[tar]
 
 
-        if (negative_enrichment and dataset !="moleculenet" and dataset !="tdc_adme" and dataset !="tdc_tox"):
+        if (negative_enrichment and dataset !="moleculenet" and dataset !="tdc_adme" and dataset !="tdc_tox" and dataset !="tdc_benchmark"):
 
             print("Before negative enrichment, length of the act and inact list")
             print("len act :" + str(len(act_list)))
@@ -750,7 +770,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         val_inact_comp_id_list = []
         test_inact_comp_id_list = []
 
-        if not (dataset == "tdc_adme" or dataset == "tdc_tox"): # If the dataset is from TDC, then the splits are already provided and molecules should be put accordingly.
+        if not (dataset == "tdc_adme" or dataset == "tdc_tox" or dataset == "tdc_benchmark"): # If the dataset is from TDC, then the splits are already provided and molecules should be put accordingly.
             
             (
                 training_act_comp_id_list,
