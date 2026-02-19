@@ -78,8 +78,17 @@ class ViT(nn.Module):
         model = Swinv2ForImageClassification(configuration)
         self.vit = model
   
-    def forward(self, x):
-        return self.vit(x).logits
+    def forward(self, x, return_attention=False):
+        outputs = self.vit(
+            x,
+            output_attentions=return_attention,
+            return_dict=True
+        )
+
+        if return_attention:
+            return outputs.logits, outputs.attentions
+
+        return outputs.logits
     
 
 class YOLOv11Classifier(nn.Module):

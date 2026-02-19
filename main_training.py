@@ -25,7 +25,12 @@ parser.add_argument(
     type=str,
     default="chembl",
     metavar='DATASET',
-    help='Dataset format (chembl, moleculenet, tdc_adme, tdc_tox)')
+    help='Dataset format (chembl, moleculenet, tdc) (default: chembl)')
+
+parser.add_argument(
+    '--benchmark',
+    action='store_true',
+    help='If active, it will run the model across 5 different random seeds for the dataset')
 
 parser.add_argument(
     '--assay_type',
@@ -187,6 +192,11 @@ parser.add_argument(
     default=20,
     help='Epochs to ignore early stopping at the beginning')
 
+parser.add_argument(
+    '--selection_metric',
+    type=str,
+    default='auroc',
+    help='Metric used to select the best validation model. Options [auroc, auprc, mcc] (default: auroc)')
 
 # ============================
 # Batch & Parallelization
@@ -269,9 +279,10 @@ def sweep():
         args.early_stopping,
         args.patience,
         args.warmup,
+        args.selection_metric,
         args.sweep,
         scheduler = args.with_scheduler,
-        use_muon = args.muon
+        use_muon = args.muon,
         )
 
 
@@ -280,16 +291,16 @@ def main():
     global args
 
     repeat = 1
-    if args.dataset == "tdc_benchmark": 
+    if args.benchmark: 
         repeat = 5
 
     for i in range(repeat):   
         # Create platform-independent path
         target_training_dataset_path = Path(args.training_dir).resolve()
         target_training_dataset_path.mkdir(parents=True, exist_ok=True)
-        print("start donwload")
+        print("start download")
         download_target(args)
-        print("end donwload")
+        print("end download")
         
         create_final_randomized_training_val_test_sets(
             target_training_dataset_path / args.target_id / args.output_file,
@@ -326,14 +337,16 @@ def main():
             
         
         else:
-
+            exp_name = args.en
+            if args.dataset == "tdc" and args.benchmark:
+                exp_name = f"{exp_name}_seed_{i}"
             with open(os.path.join(config_folder,"config.yaml")) as f:
                 config = yaml.safe_load(f)
             train_validation_test_training(
             args.target_id,
             args.model,
             config["parameters"],
-            args.en+f"_seed_{i}",
+            exp_name,
             args.cuda,
             args.run_id,
             args.model_save,
@@ -342,9 +355,10 @@ def main():
             args.early_stopping,
             args.patience,
             args.warmup,
+            args.selection_metric,
             args.sweep,
             scheduler=args.with_scheduler,
-            use_muon = args.muon
+            use_muon = args.muon,
             )
         
 

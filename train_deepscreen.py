@@ -148,10 +148,20 @@ def train_validation_test_training(
     early_stopping, 
     patience, 
     warmup,
-    
+    selection_metric,
+
     sweep=False, scheduler=False, use_muon=False
 ):
 
+    if selection_metric not in ["auroc", "auprc", "mcc"]:
+        raise ValueError(f"Invalid selection_metric '{selection_metric}'. Must be one of ['auroc', 'auprc', 'mcc'].")
+    if selection_metric == "auroc":
+        selection_metric = "ROC AUC"
+    elif selection_metric == "auprc":
+        selection_metric = "PR AUC"
+    elif selection_metric == "mcc":
+        selection_metric = "MCC"
+    print(f"Using '{selection_metric}' as the metric for model selection during training.")
     # ---- 1. CONFIGURATION MERGE (Fail-safe) ----
     # Add runtime/function args to cfg so they are logged too
     cfg = {
@@ -254,12 +264,12 @@ def train_validation_test_training(
     # ---- 6. OPTIMIZER, SCHEDULER, CRITERION ----
     n_epoch = cfg['epoch']
     learning_rate = float(cfg['learning_rate'])
-    muon_lr = float(cfg.get('muon_lr')) 
+    muon_lr = float(cfg.get('muon_lr'))
     end_learning_rate_factor = cfg.get('end_learning_rate_factor', None)
     
 
     if use_muon: 
-        if model_name=="ViT":
+        if model_name == "ViT":
             hidden_weights = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim >= 2]
             hidden_gains_biases = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim < 2]
             nonhidden_params = [*model.vit.swinv2.embeddings.parameters(), *model.vit.classifier.parameters(),*model.vit.swinv2.layernorm.parameters()]
@@ -269,11 +279,14 @@ def train_validation_test_training(
                 dict(params=hidden_gains_biases+nonhidden_params, use_muon=False,
                     lr=learning_rate, betas=(0.9, 0.95),),
             ]
+            optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
 
-        elif model_name == "YOlOv11":
+        elif model_name == "YOLOv11":
 
-            backbone_neck = model.model[:-1]
-            head = model.model[-1]
+            seq_model = model.model.model   # Sequential
+
+            backbone_neck = seq_model[:-1]  # 0–9
+            head = seq_model[-1]            # Classify layer
 
             hidden_weights = []
             hidden_gains_biases = []
@@ -303,8 +316,6 @@ def train_validation_test_training(
 
             optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
 
-
-
         else:
 
             hidden_weights = [p for p in model.parameters() if p.ndim >= 2]
@@ -318,7 +329,7 @@ def train_validation_test_training(
                 dict(params=hidden_gains_biases, use_muon=False, 
                      lr=learning_rate, betas=(0.9, 0.95)),
             ]
-        optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
+            optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     
@@ -341,14 +352,12 @@ def train_validation_test_training(
     criterion = nn.CrossEntropyLoss()
     optimizer.zero_grad()
 
-    best_val_mcc_score, best_test_mcc_score = 0.0, 0.0
-    best_val_test_performance_dict = dict()
-    best_val_test_performance_dict["MCC"] = 0.0
+    best_val_score = -float("inf")
+    best_test_score = -float("inf")
 
+    best_val_test_performance_dict = {}
     best_test_performance_dict = {}
     best_test_predictions = ""
-
-    best_val_roc_auc = 0.0
 
     early_stopping_counter = 0
 
@@ -462,12 +471,10 @@ def train_validation_test_training(
 
             test_perf_dict = dict()
             test_perf_dict["MCC"] = 0.0
-            test_predictions_tensor = torch.tensor(val_predictions)
-            all_test_labels_tensor = torch.tensor(all_val_labels)
-            try:
-                test_perf_dict = prec_rec_f1_acc_mcc(all_test_labels_tensor, test_predictions_tensor)
-            except Exception as e:
-                print(f"There was a problem during test performance calculation: {e}")
+            test_predictions_tensor = torch.tensor(test_predictions)
+            all_test_labels_tensor = torch.tensor(all_test_labels)
+            
+            test_perf_dict = prec_rec_f1_acc_mcc(all_test_labels_tensor, test_predictions_tensor)
 
             test_roc_auc = roc_auc_score(all_test_labels, np.array(test_pred_probs)[:, 1])
             test_pr_auc = average_precision_score(all_test_labels, np.array(test_pred_probs)[:, 1])
@@ -479,13 +486,13 @@ def train_validation_test_training(
 
 
             if early_stopping and epoch >= warmup:
-                print("Val ROC AUC score: ",val_perf_dict["ROC AUC"])
-                print("Best val ROC AUC: ", best_val_roc_auc)
+                print(f"Val {selection_metric} score: ", val_perf_dict[selection_metric])
+                print(f"Best val {selection_metric}: ", best_val_score)
 
-                current_val_roc_auc_2digit = round(val_perf_dict["ROC AUC"], 2)
-                best_val_roc_auc_2digit = round(best_val_roc_auc, 2)
+                current_val_score_2digit = round(val_perf_dict[selection_metric], 2)
+                best_val_score_2digit = round(best_val_score, 2)
 
-                improved = current_val_roc_auc_2digit > best_val_roc_auc_2digit
+                improved = current_val_score_2digit > best_val_score_2digit
                 if improved:
                     early_stopping_counter = 0
                     print("Early stopping number : ", early_stopping_counter)
@@ -494,12 +501,12 @@ def train_validation_test_training(
                     print("Early stopping number : ", early_stopping_counter)
                     if early_stopping_counter >= patience:
 
-
                         wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
                         wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
 
-                        
                         score_list = get_list_of_scores()
+                        if not best_test_performance_dict:
+                            best_test_performance_dict = test_perf_dict.copy()
                         for scr in score_list:
                             best_val_test_result_fl.write("Test {}:\t{}\n".format(scr, best_test_performance_dict[scr]))
                         best_val_test_prediction_fl.write(best_test_predictions)
@@ -507,24 +514,32 @@ def train_validation_test_training(
                         best_val_test_result_fl.close()
                         best_val_test_prediction_fl.close()
 
-
                         print(f"Early stopping triggered at epoch {epoch}")
-                        break
+                        wandb.finish()
+                        return
 
+            current_val_score = val_perf_dict[selection_metric]
 
-            if val_perf_dict["ROC AUC"] > best_val_roc_auc:
+            if current_val_score > best_val_score:
+                best_val_score = current_val_score
+                best_test_score = test_perf_dict[selection_metric]
 
-                best_val_roc_auc = val_perf_dict["ROC AUC"]
-
-
-            if val_perf_dict["MCC"] > best_val_mcc_score:
-                best_val_mcc_score = val_perf_dict["MCC"]
-                best_test_mcc_score = test_perf_dict["MCC"]
-                
                 validation_scores_dict, best_test_performance_dict, best_test_predictions, str_test_predictions = save_best_model_predictions(
-                    experiment_name, epoch, val_perf_dict, test_perf_dict,
-                    model,project_file_path, target_id, str_arguments,
-                    all_test_comp_ids, all_test_labels, test_predictions, global_step,optimizer)
+                    experiment_name,
+                    epoch,
+                    val_perf_dict,
+                    test_perf_dict,
+                    model,
+                    project_file_path,
+                    target_id,
+                    str_arguments,
+                    all_test_comp_ids,
+                    all_test_labels,
+                    test_predictions,
+                    global_step,
+                    optimizer
+                )
+
             
         wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
         wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
@@ -541,4 +556,3 @@ def train_validation_test_training(
         
     
     wandb.finish()
-

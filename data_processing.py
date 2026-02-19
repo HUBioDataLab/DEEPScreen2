@@ -548,41 +548,32 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
     """
     split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
     """
-    if dataset == "moleculenet" or dataset =="tdc_adme" or dataset == "tdc_tox" or dataset == "tdc_benchmark":
+    assert(dataset in ["moleculenet", "chembl", "tdc"]), "Invalid dataset name"
+
+    if dataset == "moleculenet" or dataset == "tdc":
 
         if dataset == "moleculenet":
             pandas_df = pd.read_csv(activity_data)        
             pandas_df.rename(columns={pandas_df.columns[0]: "canonical_smiles", pandas_df.columns[-1]: "target"}, inplace=True)
             pandas_df = pandas_df[["canonical_smiles", "target"]]
-        else:
-            if dataset == "tdc_adme":
-                data = ADME(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
-            if dataset == "tdc_tox":
-                data = Tox(name = targetid,path = os.path.join("training_files","target_training_datasets",targetid))
-            if dataset == "tdc_adme" or dataset == "tdc_tox":   
-                split = data.get_split(method = "scaffold" if scaffold else "random", frac = [0.8,0.1,0.1],seed = 42)
-                split["train"]["split"] = "train"
-                split["valid"]["split"] = "valid"
-                split["test"]["split"] = "test" 
+        elif dataset == "tdc":
+            
+            split = {}
+            group = admet_group(path = training_files_path)
 
-            if dataset == "tdc_benchmark":
-                split = {}
-                group = admet_group(path = 'data/')
+            benchmark = group.get(targetid)
 
-                benchmark = group.get(targetid)
-
-                name = benchmark['name']
-                train_val, test = benchmark['train_val'], benchmark['test']
-                train, valid = group.get_train_valid_split(benchmark = name, split_type = 'default', seed = run_seed)
-                split["train"] = train 
-                split["valid"] = valid
-                split["test"] = test
-                split["train"]["split"] = "train"
-                split["valid"]["split"] = "valid"
-                split["test"]["split"] = "test"
+            name = benchmark['name']
+            train_val, test = benchmark['train_val'], benchmark['test']
+            train, valid = group.get_train_valid_split(benchmark = name, split_type = 'default', seed = run_seed)
+            split["train"] = train 
+            split["valid"] = valid
+            split["test"] = test
+            split["train"]["split"] = "train"
+            split["valid"]["split"] = "valid"
+            split["test"]["split"] = "test"
 
             pandas_df = pd.concat([split["train"],split["valid"],split["test"]])
-            pandas_df
             pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-2]: "target"}, inplace=True)
             pandas_df = pandas_df[["Drug_ID","canonical_smiles", "target","split"]].copy()
 
@@ -703,7 +694,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         act_list, inact_list = act_inact_dict[tar]
 
 
-        if (negative_enrichment and dataset !="moleculenet" and dataset !="tdc_adme" and dataset !="tdc_tox" and dataset !="tdc_benchmark"):
+        if (negative_enrichment and dataset !="moleculenet" and dataset !="tdc"):
 
             print("Before negative enrichment, length of the act and inact list")
             print("len act :" + str(len(act_list)))
@@ -770,7 +761,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
         val_inact_comp_id_list = []
         test_inact_comp_id_list = []
 
-        if not (dataset == "tdc_adme" or dataset == "tdc_tox" or dataset == "tdc_benchmark"): # If the dataset is from TDC, then the splits are already provided and molecules should be put accordingly.
+        if not (dataset == "tdc"): # If the dataset is from TDC, then the splits are already provided and molecules should be put accordingly.
             
             (
                 training_act_comp_id_list,
@@ -980,9 +971,7 @@ class DEEPScreenDataset(Dataset):
     def __getitem__(self, index):
         comp_id = self.compid_list[index]
         
-        img_paths = [os.path.join(self.dataset_path, "imgs", "{}.png".format(comp_id))]        
-
-        img_path = random.choice([path for path in img_paths if os.path.exists(path)])      
+        img_path = os.path.join(self.dataset_path, "imgs", "{}.png".format(comp_id))     
             
         if not os.path.exists(img_path):
             raise FileNotFoundError(f"Image not found for compound ID: {comp_id}")

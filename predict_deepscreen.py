@@ -1,4 +1,5 @@
 import os
+from pyexpat import model
 import torch
 import numpy as np
 import pandas as pd
@@ -23,34 +24,11 @@ from sklearn.metrics import (
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-# --- HELPER: Process and Save a Single Heatmap ---
 
-def save_single_heatmap(heatmap_tensor, original_img_tensor, comp_id, output_dir, suffix=""):
 
-    heatmap = heatmap_tensor.numpy()
-    heatmap_norm = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
+# örnek kullanım
+import matplotlib.pyplot as plt
 
-    original_img = original_img_tensor.permute(1, 2, 0).numpy()
-    original_img = (original_img - original_img.min()) / (original_img.max() - original_img.min() + 1e-8)
-
-    # grayscale → RGB convert
-    if original_img.shape[2] == 1:
-        original_img = np.repeat(original_img, 3, axis=2)
-
-    fig, ax = plt.subplots(figsize=(5, 5))
-    ax.imshow(original_img, alpha=0.6)
-    im = ax.imshow(heatmap_norm, cmap="jet", alpha=0.4)
-    ax.axis("off")
-
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.1)
-
-    cbar = fig.colorbar(im, cax=cax)
-    cbar.set_label("Attention Level", rotation=270, labelpad=15)
-
-    save_path = os.path.join(output_dir, f"{comp_id}{suffix}.png")
-    fig.savefig(save_path, bbox_inches="tight", dpi=150)
-    plt.close(fig)
 
 def process_smiles_for_prediction(data):
     """
@@ -78,48 +56,158 @@ def process_smiles_for_prediction(data):
         print(f"Error processing {compound_id}: {e}")
         return None
     return compound_id
-
-def load_labels(labels_path, target_id=None):
-    """
-    Loads labels from a JSON file. 
-    Supports two formats:
-    1. Simple Dict: {"CHEMBL1": 1, "CHEMBL2": 0}
-    2. DEEPScreen List: [["CHEMBL1", 1], ["CHEMBL2", 0]]
-    """
-    if not labels_path or not os.path.exists(labels_path):
-        return None
+def save_single_heatmap_overlay_attention(
+        heatmap, 
+        img_tensor, 
+        output_path, 
+        threshold_ratio=0.85): 
     
-    print(f"Loading labels from {labels_path}...")
-    try:
-        data = json.load(open(labels_path))
-        
-        # Format 1: Direct Dictionary
-        if isinstance(data, dict):
-            if "test" in data or "train" in data: # Nested structure
-                combined = {}
-                for key in data:
-                    if isinstance(data[key], list):
-                        for item in data[key]:
-                            combined[item[0]] = item[1]
-                return combined
-            elif all(isinstance(v, int) for v in data.values()):
-                return data
-            
-        # Format 2: List of lists
-        elif isinstance(data, list):
-            label_dict = {}
-            for item in data:
-                if len(item) >= 2:
-                    label_dict[item[0]] = item[1]
-            return label_dict
-            
-    except Exception as e:
-        print(f"Warning: Could not parse labels file: {e}")
-        return None
-    return None
+    import cv2 
+    import matplotlib.pyplot as plt 
+    import numpy as np 
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+    from matplotlib.cm import ScalarMappable
 
-def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, dropout, hidden_size, window_size, attention_probs_dropout_prob, drop_path_rate, layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio, cuda_selection, attention_map_mode):
-    # Setup paths
+    img = img_tensor.permute(1, 2, 0).detach().cpu().numpy()
+    img = np.clip(img, 0, 1)
+    h, w = img.shape[:2]
+
+    heatmap_proc = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
+    heatmap_resized = cv2.resize(heatmap_proc, (w, h), interpolation=cv2.INTER_CUBIC)
+
+    colors = [(1, 1, 1), (1, 0, 0)]
+    custom_cmap = LinearSegmentedColormap.from_list("transparent_red", colors)
+
+    mask = (heatmap_resized >= threshold_ratio)
+    
+    heatmap_grad = np.zeros_like(heatmap_resized)
+    heatmap_grad[mask] = (heatmap_resized[mask] - threshold_ratio) / (1.0 - threshold_ratio + 1e-8)
+
+    heatmap_rgb = custom_cmap(heatmap_grad)[:, :, :3]
+
+    # Multiply Blending
+    final_overlay = heatmap_rgb * img
+    final_overlay = np.clip(final_overlay, 0, 1)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.imshow(final_overlay)
+    ax.axis('off')
+
+    norm = Normalize(vmin=threshold_ratio, vmax=1)
+    sm = ScalarMappable(norm=norm, cmap=custom_cmap)
+    sm.set_array([])
+    
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Attention Intensity (Thresholded)")
+
+    plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
+    plt.close(fig)
+
+def save_single_heatmap_overlay(
+        heatmap,
+        img_tensor,
+        output_path,
+        threshold_ratio=0.1,
+        dilation_size=5,
+        blur_sigma=6):
+
+    import cv2
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+
+    img = img_tensor.permute(1, 2, 0).detach().cpu().numpy()
+    img = np.clip(img, 0, 1)
+    h, w = img.shape[:2]
+
+    heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
+    heatmap = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_CUBIC)
+
+    mask = (heatmap > threshold_ratio).astype(np.float32)
+    kernel = np.ones((dilation_size, dilation_size), np.uint8)
+    expanded_mask = cv2.dilate(mask, kernel, iterations=1)
+    expanded_mask = cv2.GaussianBlur(expanded_mask, (0, 0), blur_sigma)
+    expanded_mask = np.clip(expanded_mask, 0, 1)
+
+    red_layer = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    white_bg = np.ones((h, w, 3), dtype=np.float32)
+    
+    heatmap_layer = white_bg * (1 - expanded_mask[..., None]) + red_layer * expanded_mask[..., None]
+
+    final_overlay = heatmap_layer * img
+    
+    final_overlay = np.clip(final_overlay, 0, 1)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.imshow(final_overlay)
+    ax.axis("off")
+
+    sm = ScalarMappable(norm=Normalize(vmin=0, vmax=1), cmap="Reds")
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Saliency Intensity", rotation=270, labelpad=15)
+
+    plt.savefig(output_path, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+
+import torch.nn.functional as F
+import os, torch, cv2
+import numpy as np
+import matplotlib.pyplot as plt
+def calculate_attn_map(attentions, 
+                       img_tensor,):
+
+
+    B, _, img_h, img_w = img_tensor.shape
+    
+    rollout_mat = None
+
+    for layer_idx, attn in enumerate(attentions):
+
+        fused_attn = attn.mean(dim=1)
+        device = fused_attn.device
+        N = fused_attn.size(-1)
+        I = torch.eye(N).to(device)
+        # fused_attn = 0.5 * fused_attn + 0.5 * I
+        
+        fused_attn = fused_attn / fused_attn.sum(dim=-1, keepdim=True)
+
+        curr_num_windows_total = fused_attn.shape[0]
+        num_windows_per_img = curr_num_windows_total // B
+
+        if rollout_mat is None:
+            rollout_mat = fused_attn
+        else:
+            if rollout_mat.shape[0] != curr_num_windows_total:
+                prev_num_windows = rollout_mat.shape[0] // B
+                grid_prev = int(np.sqrt(prev_num_windows))
+                grid_curr = int(np.sqrt(num_windows_per_img))
+                temp_rollout = rollout_mat.view(B, grid_prev, grid_prev, N, N)
+                temp_rollout = temp_rollout.permute(0, 3, 4, 1, 2).reshape(B * N * N, 1, grid_prev, grid_prev)
+                
+                temp_rollout = torch.nn.functional.interpolate(
+                    temp_rollout, 
+                    size=(grid_curr, grid_curr), 
+                    mode='bilinear', 
+                    align_corners=False
+                )
+                
+                rollout_mat = temp_rollout.reshape(B, N, N, grid_curr, grid_curr).permute(0, 3, 4, 1, 2).reshape(curr_num_windows_total, N, N)
+
+            rollout_mat = torch.matmul(fused_attn, rollout_mat)
+
+    layer_saliency = rollout_mat.mean(dim=1) 
+    
+    grid_size = int(np.sqrt(num_windows_per_img))
+    window_size = int(np.sqrt(N))
+    stitched_map = layer_saliency.view(B, grid_size, grid_size, window_size, window_size)
+    stitched_map = stitched_map.permute(0, 1, 3, 2, 4).contiguous()
+    stitched_map = stitched_map.view(B, grid_size * window_size, grid_size * window_size)
+    return stitched_map
+
+def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, dropout, hidden_size, window_size, attention_probs_dropout_prob, drop_path_rate, layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio, cuda_selection, map_mode,map_type = "saliency"):
+    
     current_path_beginning = os.getcwd().split("DEEPScreen")[0]
     current_path_version = os.getcwd().split("DEEPScreen")[1].split("/")[0]
     project_file_path = f"{current_path_beginning}DEEPScreen{current_path_version}"
@@ -134,7 +222,7 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
     label_dict = load_deepscreen_labels(target_id, target_prediction_dataset_path,split)
     has_labels = label_dict is not None
     # Setup Maps
-    generate_maps = attention_map_mode in ["all", "avg"]
+    generate_maps = map_mode in ["all", "avg"]
     maps_output_dir = os.path.join(target_prediction_dataset_path, target_id, "attention_maps")
     if generate_maps and not os.path.exists(maps_output_dir):
         os.makedirs(maps_output_dir)
@@ -157,149 +245,165 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
     model.eval()
     
     # Loader
-    dataloader = get_prediction_loader(target_id, target_prediction_dataset_path, label_dict, batch_size=batch_size)
-
-    if dataloader is None:
-        print("No images found.")
-        return
+    dataloader = get_prediction_loader(
+        target_id,
+        target_prediction_dataset_path,
+        label_dict,
+        batch_size=batch_size
+    )
     
     if dataloader is None:
-        print("No images found to predict.")
+        print("No images found.")
         return
 
     # Data Storage
     compound_data = {}         
     attention_accumulator = {} 
-    
-    print(f"Making predictions... (Maps: {attention_map_mode}, Calc Metrics: {has_labels})")
-    
-    context_manager = torch.enable_grad() if generate_maps else torch.no_grad()
-    
-    with context_manager:
 
-        for batch_imgs, batch_labels, comp_ids in tqdm(dataloader, desc="Predicting"):
+    print(f"Making predictions... (Maps: {map_mode}, Calc Metrics: {has_labels})")
+        
+    print(f"Maps: {map_mode} | Type: {map_type}")
+    context = torch.enable_grad() if (generate_maps and map_type == "saliency") else torch.no_grad()
+
+    with context:
+        for batch_imgs, batch_labels, comp_ids in tqdm(dataloader):
+
             batch_imgs = batch_imgs.to(device)
 
-            if generate_maps:
+            # -------------------------------------------------
+            # FORWARD
+            # -------------------------------------------------
+            if generate_maps and map_type == "saliency":
                 batch_imgs.requires_grad_(True)
-                with torch.enable_grad():
-                    outputs = model(batch_imgs)
+                outputs = model(batch_imgs)
+            elif generate_maps and map_type == "attention":
+                if model_name != "ViT":
+                    raise ValueError("Attention rollout only valid for ViT")
+                outputs, attentions = model(batch_imgs, return_attention=True)
             else:
-                with torch.no_grad():
-                    outputs = model(batch_imgs)
+                outputs = model(batch_imgs)
 
-            # --- Attention Map Logic ---
-            if generate_maps:
+            # -------------------------------------------------
+            # SALIENCY MAP
+            # -------------------------------------------------
+            if generate_maps and map_type == "saliency":
+
                 score = outputs[:, 1].sum()
                 model.zero_grad(set_to_none=True)
-                score.backward(retain_graph=False)
+                score.backward()
 
                 gradients = batch_imgs.grad.data.abs()
-                saliency_maps, _ = torch.max(gradients, dim=1)
-                saliency_maps = saliency_maps.cpu()
+                importance_maps, _ = torch.max(gradients, dim=1)
+                importance_maps = importance_maps.detach().cpu()
                 detached_imgs = batch_imgs.detach().cpu()
+
+            # -------------------------------------------------
+            # ATTENTION ROLLOUT
+            # -------------------------------------------------
+            elif generate_maps and map_type == "attention":
+
+                importance_maps = calculate_attn_map(attentions, batch_imgs)
+                importance_maps = importance_maps.detach().cpu()
+                detached_imgs = batch_imgs.detach().cpu()
+
+            # -------------------------------------------------
+            # MAP SAVE LOGIC
+            # -------------------------------------------------
+            if generate_maps:
+
                 for i, full_id in enumerate(comp_ids):
-                    # PARSE ID AND ANGLE
-                    # Assumes full_id format is "Name_Angle", e.g., "CHEMBL123_90"
-                    # If your ID is "CHEMBL123_90.png", add .replace('.png','')
+
                     try:
-                        if "_" in full_id:
-                            base_id = full_id.rsplit('_', 1)[0]
-                            angle_str = full_id.rsplit('_', 1)[1]
-                            angle = int(angle_str)
+                        base_id, angle_str = full_id.rsplit("_", 1)
+                        angle = int(angle_str)
+                    except:
+                        base_id, angle = full_id, 0
+
+                    current_map = importance_maps[i]
+
+                    # Resize to image resolution
+                    img_h, img_w = detached_imgs[i].shape[1:]
+                    current_map = F.interpolate(
+                        current_map.unsqueeze(0).unsqueeze(0),
+                        size=(img_h, img_w),
+                        mode="bilinear",
+                        align_corners=True
+                    ).squeeze()
+
+                    if map_mode == "all":
+                        out_p = os.path.join(maps_output_dir, f"{full_id}.png")
+                        if map_type == "saliency":
+                            save_single_heatmap_overlay(
+                                current_map.numpy(),
+                                detached_imgs[i],
+                                out_p
+                            )
                         else:
-                            # Fallback if no angle found (assume 0 or single image)
-                            base_id = full_id
-                            angle = 0
-                    except ValueError as e:
-                        print(f"Warning: Could not parse angle from {full_id}. Assuming 0.",e)
-                        base_id = full_id
-                        angle = 0
+                            save_single_heatmap_overlay_attention(
+                                current_map.numpy(),
+                                detached_imgs[i],
+                                out_p
+                            )
 
-                    if attention_map_mode == "all":
-                        # Save raw map as before
-                        save_single_heatmap(saliency_maps[i], detached_imgs[i], full_id, maps_output_dir, suffix="")
-                        
-                    elif attention_map_mode == "avg":
-                        # 1. Get the map for this rotation
-                        current_map = saliency_maps[i] # Shape: [H, W]
-                        
-                        # 2. Un-rotate the map to align with 0-degree view
-                        # TF.rotate expects [C, H, W] or PIL, so we unsqueeze to add channel dim
+                    elif map_mode == "avg":
+
                         if angle != 0:
-                            # prepare shape: [N=1, C=1, H, W]
-                            current_map = current_map.unsqueeze(0).unsqueeze(0)
+                            rotated_map = TF.rotate(
+                                current_map.unsqueeze(0),
+                                -angle,
+                                interpolation=TF.InterpolationMode.BILINEAR
+                            ).squeeze()
+                        else:
+                            rotated_map = current_map
 
-                            # build inverse rotation matrix
-                            theta = torch.tensor([
-                                [ [ math.cos(math.radians(angle)),  math.sin(math.radians(angle)), 0.0 ],
-                                [ -math.sin(math.radians(angle)), math.cos(math.radians(angle)), 0.0 ] ]
-                            ], dtype=current_map.dtype, device=current_map.device)
-
-                            # create sampling grid for inverse warp
-                            grid = F.affine_grid(theta, current_map.size(), align_corners=True)
-
-                            # rotate BACK on GPU
-                            current_map = F.grid_sample(current_map, grid, align_corners=True)
-
-                            # restore shape: [H, W]
-                            current_map = current_map.squeeze(0).squeeze(0)
-
-                        # 3. Accumulate
                         if base_id not in attention_accumulator:
                             attention_accumulator[base_id] = {
-                                'sum_grad': current_map, 
-                                'count': 1, 
-                                'ref_img': None
+                                "sum_map": rotated_map.numpy(),
+                                "count": 1,
+                                "ref_img": detached_imgs[i] if angle == 0 else None
                             }
                         else:
-                            attention_accumulator[base_id]['sum_grad'] += current_map
-                            attention_accumulator[base_id]['count'] += 1
-                        
-                        # 4. Store the 0-degree image as the reference for the final overlay
-                        # We only want to draw the heatmap on top of the upright molecule
-                        if angle == 0 or attention_accumulator[base_id]['ref_img'] is None:
-                            attention_accumulator[base_id]['ref_img'] = detached_imgs[i]
-                            
-                del gradients, saliency_maps
+                            attention_accumulator[base_id]["sum_map"] += rotated_map.numpy()
+                            attention_accumulator[base_id]["count"] += 1
+                            if angle == 0:
+                                attention_accumulator[base_id]["ref_img"] = detached_imgs[i]
 
-            # --- Prediction Logic ---
+            # -------------------------------------------------
+            # PREDICTION
+            # -------------------------------------------------
             soft_probs = F.softmax(outputs.detach(), dim=1)
             batch_preds = torch.argmax(outputs.detach(), dim=1)
-            
-            batch_preds = batch_preds.cpu()
-            soft_probs = soft_probs.cpu()
-            batch_labels = batch_labels.cpu()
 
             for i, full_id in enumerate(comp_ids):
-                # Clean the ID for aggregation stats (remove angle suffix)
-                if "_" in full_id:
-                    clean_id = full_id.rsplit('_', 1)[0]
-                else:
-                    clean_id = full_id
+
+                clean_id = full_id.rsplit("_", 1)[0] if "_" in full_id else full_id
 
                 if clean_id not in compound_data:
                     compound_data[clean_id] = {"preds": [], "probs": [], "label": -1}
-                
+
                 compound_data[clean_id]["preds"].append(batch_preds[i].item())
                 compound_data[clean_id]["probs"].append(soft_probs[i][1].item())
-                
-                current_label = batch_labels[i].item()
-                if current_label != -1:
-                    compound_data[clean_id]["label"] = current_label
-    # --- Post-Processing: Avg Maps ---
-    if attention_map_mode == "avg":
-        print("Saving averaged maps...")
-        for comp_id, data in tqdm(attention_accumulator.items(), desc="Saving"):
-            avg_heatmap = data['sum_grad'] / data['count']
+
+                label = batch_labels[i].item()
+                if label != -1:
+                    compound_data[clean_id]["label"] = label
+
             
-            # Ensure we have a reference image (fallback if 0-degree was missing)
-            ref_img = data['ref_img']
-            if ref_img is None:
-                print(f"Warning: No 0-degree image found for {comp_id}, skipping map.")
+    # -------------------- AVG SAVE --------------------
+    if generate_maps and map_mode == "avg":
+        for cid, data in attention_accumulator.items():
+            final_avg = data["sum_map"] / data["count"]
+            ref = data["ref_img"]
+            if ref is None:
                 continue
+
+            out_p = os.path.join(maps_output_dir, f"{cid}_avg.png")
+            if map_type == "saliency":
+                save_single_heatmap_overlay(final_avg, ref, out_p)
+            else:
+                save_single_heatmap_overlay_attention(final_avg, ref, out_p)
                 
-            save_single_heatmap(avg_heatmap, ref_img, comp_id, maps_output_dir, suffix="_avg")
+    print("Prediction finished.")
 
     # --- Aggregation & Metrics ---
     final_predictions = {}
@@ -403,9 +507,15 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default="CNNModel1", help='Model name (default: CNNModel1)')
     
     # --- ARGUMENT FOR ATTENTION MAPS ---
-    parser.add_argument('--attention_map_mode', type=str, default="none", choices=["none", "all", "avg"],
+    parser.add_argument('--map_mode', type=str, default="none", choices=["none", "all", "avg"],
                         help='Mode for attention maps: "none" (default), "all" (save every rotation), or "avg" (save one averaged map per molecule).')
-    
+    parser.add_argument(
+        '--map_type',
+        type=str,
+        default="saliency",
+        choices=["saliency", "attention"],
+        help="saliency (grad-based) or attention (ViT rollout)"
+    )
     args = parser.parse_args()
 
     def dict_to_namespace(d):
@@ -414,7 +524,7 @@ if __name__ == "__main__":
         else:
             return d
         
-    with open("config.yaml") as f:
+    with open("config/config.yaml") as f:
         config = yaml.safe_load(f)
 
     config_ns = dict_to_namespace(config)
@@ -439,5 +549,6 @@ if __name__ == "__main__":
         params.depths,
         params.mlp_ratio,           
         args.cuda,
-        args.attention_map_mode
+        args.map_mode,
+        args.map_type
         )

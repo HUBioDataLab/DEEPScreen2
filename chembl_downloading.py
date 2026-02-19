@@ -287,13 +287,7 @@ def read_chembl_ids_from_file(file_path):
 async def download_target_async(args):
     """Async version of download_target with concurrent processing"""
 
-    if args.dataset == "tdc_adme":
-        data = ADME(name = args.target_id,path = os.path.join("training_files","target_training_datasets",args.target_id))
-        return        
-    elif args.dataset == "tdc_tox":
-        data = Tox(name = args.target_id,path = os.path.join("training_files","target_training_datasets",args.target_id))
-        return
-    elif args.dataset == "tdc_benchmark":
+    if args.dataset == "tdc":
         return
     downloader = ChEMBLDownloader(max_concurrent=args.max_concurrent)
     base_dir = os.path.dirname(os.path.abspath(__file__))

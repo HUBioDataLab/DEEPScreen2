@@ -8,3 +8,7 @@ prediction_files/*
 models.txt
 .vscode
 data
+final_runlar_notlar.txt
+POTENTIAL_ISSUES.md
+training_files/admet_group
+training_files/admet_group.zip
