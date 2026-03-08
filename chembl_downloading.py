@@ -71,10 +71,10 @@ class ChEMBLDownloader:
         
         base_url = "https://www.ebi.ac.uk/chembl/api/data/activity.json"
         params = {
-            'target_id__in': ','.join(target_ids),
+            'target_chembl_id__in': ','.join(target_ids),
             'assay_type__in': ','.join(assay_types),
             'pchembl_value__isnull': 'false',
-            'only': 'molecule_chembl_id,pchembl_value,target_id,bao_label'
+            'only': 'molecule_chembl_id,pchembl_value,target_chembl_id,bao_label'
         }
         
         # First request to get total count and setup pagination
@@ -208,7 +208,7 @@ class ChEMBLDownloader:
         base_url = "https://www.ebi.ac.uk/chembl/api/data/target.json"
         params = {
             'target_type': 'SINGLE PROTEIN',
-            'only': 'target_id'
+            'only': 'target_chembl_id'
         }
         
         async with await self.create_session() as session:
