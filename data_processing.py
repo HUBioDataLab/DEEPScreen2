@@ -451,7 +451,7 @@ def get_chembl_from_uniprot(uniprot_id: str) -> list:
     r = requests.get(url)
     r.raise_for_status()
     data = r.json().get('targets', [])
-    return [t['target_id'] for t in data]
+    return [t['target_chembl_id'] for t in data]
 
 # 6) Fetch inactive compounds for a ChEMBL target
 
@@ -459,7 +459,7 @@ def fetch_inactive_compounds(chembl_target_id, pchembl_threshold) -> list:
     print("fetch_inactive_compounds started")
     url = "https://www.ebi.ac.uk/chembl/api/data/activity.json"
     params = {
-        'target_id': chembl_target_id,
+        'target_chembl_id': chembl_target_id,
         'pchembl_value__lt': pchembl_threshold,
         'limit': 10000
     }
