@@ -12,7 +12,12 @@ from torch.optim.lr_scheduler import LinearLR
 from models import CNNModel1, ViT,YOLOv11Classifier
 
 from data_processing import get_train_test_val_data_loaders
-from evaluation_metrics import prec_rec_f1_acc_mcc, get_list_of_scores
+from evaluation_metrics import (
+    prec_rec_f1_acc_mcc,
+    get_list_of_scores,
+    regression_metrics,
+    get_list_of_regression_scores,
+)
 
 from sklearn.metrics import roc_auc_score, average_precision_score
 
@@ -24,14 +29,17 @@ import matplotlib.pyplot as plt
 import cv2
 import shutil
 
-from muon import SingleDeviceMuonWithAuxAdam
+try:
+    from muon import SingleDeviceMuonWithAuxAdam
+except ImportError:
+    SingleDeviceMuonWithAuxAdam = None
+
 torch.backends.cudnn.benchmark = False
 torch.use_deterministic_algorithms(True)
 
 warnings.filterwarnings(action='ignore')
 torch.manual_seed(123)
 np.random.seed(123)
-use_gpu = torch.cuda.is_available()
 
 sep = os.sep
 
@@ -79,7 +87,61 @@ def get_device(cuda_selection):
         print("CPU is available on this device!")
     return device
 
-def calculate_val_test_loss(model, criterion, data_loader, device):
+
+def prepare_labels(labels, device, task_type):
+    if task_type == "regression":
+        return torch.tensor(labels, dtype=torch.float32, device=device).view(-1, 1)
+    return torch.tensor(labels, dtype=torch.long, device=device)
+
+
+def calculate_prediction_outputs(y_pred, task_type):
+    if task_type == "regression":
+        preds = y_pred.view(-1)
+        pred_aux = preds.detach().cpu().numpy()
+        return preds, pred_aux
+
+    _, preds = torch.max(y_pred, 1)
+    pred_aux = y_pred.detach().cpu().numpy()
+    return preds, pred_aux
+
+
+def aggregate_predictions(comp_ids, labels, predictions, pred_aux, task_type):
+
+    unique_mols = {}
+
+    for cid, lab, pred, aux in zip(comp_ids, labels, predictions, pred_aux):
+        cid = cid.rsplit('_', 1)[0]
+        if cid not in unique_mols.keys():
+            unique_mols[cid] = {"labels": [], "preds": [], "aux": []}
+        unique_mols[cid]["labels"].append(lab)
+        unique_mols[cid]["preds"].append(pred)
+        unique_mols[cid]["aux"].append(aux)
+
+    agg_labels = []
+    agg_preds = []
+    agg_aux = []
+    agg_comp_ids = []
+
+    for cid, data in unique_mols.items():
+        current_label = data["labels"][0]
+
+        if task_type == "regression":
+            final_pred = float(np.mean(np.asarray(data["preds"], dtype=float)))
+            final_aux = final_pred
+        else:
+            total_rotations = len(data["preds"])
+            positive_votes = sum(data["preds"])
+            final_pred = 1 if positive_votes >= (total_rotations / 2) else 0
+            final_aux = np.mean(np.array(data["aux"]), axis=0)
+
+        agg_comp_ids.append(cid)
+        agg_labels.append(current_label)
+        agg_preds.append(final_pred)
+        agg_aux.append(final_aux)
+    return agg_comp_ids, agg_labels, agg_preds, agg_aux
+
+
+def calculate_val_test_loss(model, criterion, data_loader, device, task_type):
     total_count = 0
     total_loss = 0.0
     all_comp_ids = []
@@ -90,57 +152,19 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
     for i, data in enumerate(data_loader):
 
         img_arrs, labels, comp_ids = data
-        img_arrs, labels = torch.tensor(img_arrs).type(torch.FloatTensor).to(device), torch.tensor(labels).to(device)
+        img_arrs = torch.tensor(img_arrs).type(torch.FloatTensor).to(device)
+        labels = prepare_labels(labels, device, task_type)
         total_count += len(comp_ids)
         y_pred = model(img_arrs).to(device)
         loss = criterion(y_pred, labels)
         total_loss += float(loss.item())
         all_comp_ids.extend(list(comp_ids))
-        _, preds = torch.max(y_pred, 1)
-        all_labels.extend(list(labels.detach().cpu().numpy()))
-        all_predictions.extend(list(preds.detach().cpu().numpy()))
-        all_pred_probs.extend(y_pred.detach().cpu().numpy())
+        preds, pred_aux = calculate_prediction_outputs(y_pred, task_type)
+        all_labels.extend(list(labels.detach().cpu().view(-1).numpy()))
+        all_predictions.extend(list(preds.detach().cpu().view(-1).numpy()))
+        all_pred_probs.extend(list(pred_aux))
 
-
-    return total_loss, total_count, all_comp_ids, all_labels, all_predictions,all_pred_probs
-
-def aggregate_predictions(comp_ids, labels, predictions, pred_probs):
-
-    unique_mols = {}
-    
-    # Collect molecules in dict
-    for cid, lab, pred, prob in zip(comp_ids, labels, predictions, pred_probs):
-        cid = cid.rsplit('_', 1)[0]
-        if cid not in unique_mols.keys():
-            unique_mols[cid] = {"labels": [], "preds": [], "probs": []}
-        unique_mols[cid]["labels"].append(lab)
-        unique_mols[cid]["preds"].append(pred)
-        unique_mols[cid]["probs"].append(prob)
-    agg_labels = []
-    agg_preds = []
-    agg_probs = []
-    agg_comp_ids = []
-    
-    for cid, data in unique_mols.items():
-        # Label: All of are the same so we can get the first
-        current_label = data["labels"][0]
-        
-        # Voting 
-        total_rotations = len(data["preds"])
-        positive_votes = sum(data["preds"]) 
-        
-        if positive_votes >= (total_rotations / 2):
-            final_pred = 1
-        else:
-            final_pred = 0
-            
-        avg_prob = np.mean(np.array(data["probs"]), axis=0)
-
-        agg_comp_ids.append(cid)
-        agg_labels.append(current_label)
-        agg_preds.append(final_pred)
-        agg_probs.append(avg_prob)
-    return agg_comp_ids, agg_labels, agg_preds, agg_probs
+    return total_loss, total_count, all_comp_ids, all_labels, all_predictions, all_pred_probs
 
 def train_validation_test_training(
     target_id, model_name, config, experiment_name, cuda_selection, run_id, model_save, project_name, entity,
@@ -149,19 +173,38 @@ def train_validation_test_training(
     patience, 
     warmup,
     selection_metric,
+    task_type="classification",
 
     sweep=False, scheduler=False, use_muon=False
 ):
 
-    if selection_metric not in ["auroc", "auprc", "mcc"]:
-        raise ValueError(f"Invalid selection_metric '{selection_metric}'. Must be one of ['auroc', 'auprc', 'mcc'].")
-    if selection_metric == "auroc":
-        selection_metric = "ROC AUC"
-    elif selection_metric == "auprc":
-        selection_metric = "PR AUC"
-    elif selection_metric == "mcc":
-        selection_metric = "MCC"
-    print(f"Using '{selection_metric}' as the metric for model selection during training.")
+    classification_metrics = {
+        "auroc": "ROC AUC",
+        "auprc": "PR AUC",
+        "mcc": "MCC",
+    }
+    regression_metric_map = {
+        "rae": "RAE",
+        "mae": "MAE",
+        "r2": "R2",
+        "spearman": "Spearman_R",
+        "kendall": "Kendall's_Tau",
+    }
+
+    if task_type == "classification":
+        if selection_metric not in classification_metrics:
+            raise ValueError(f"Invalid selection_metric '{selection_metric}'. Must be one of {list(classification_metrics.keys())}.")
+        selection_metric = classification_metrics[selection_metric]
+        higher_is_better = True
+    elif task_type == "regression":
+        if selection_metric not in regression_metric_map:
+            raise ValueError(f"Invalid selection_metric '{selection_metric}'. Must be one of {list(regression_metric_map.keys())}.")
+        selection_metric = regression_metric_map[selection_metric]
+        higher_is_better = selection_metric not in ["RAE", "MAE"]
+    else:
+        raise ValueError(f"Invalid task_type '{task_type}'. Must be 'classification' or 'regression'.")
+
+    print(f"Using task_type='{task_type}' with '{selection_metric}' as the metric for model selection during training.")
     # ---- 1. CONFIGURATION MERGE (Fail-safe) ----
     # Add runtime/function args to cfg so they are logged too
     cfg = {
@@ -171,7 +214,8 @@ def train_validation_test_training(
         "cuda_selection": cuda_selection,
         "scheduler": scheduler,
         "use_muon": use_muon,
-        "model_save": model_save
+        "model_save": model_save,
+        "task_type": task_type
     }
     
     for i,v in config.items():
@@ -235,12 +279,11 @@ def train_validation_test_training(
         model = CNNModel1(
             cfg['fc1'], 
             cfg['fc2'], 
-            cfg['dropout']
+            cfg['dropout'],
+            task_type=task_type,
         ).to(device)
         
     elif model_name == "ViT":
-        # For complex models, you can pass parameters explicitly or using **cfg
-        # if the model arguments match your dictionary keys exactly.
         model = ViT(
             cfg['window_size'],
             cfg['hidden_size'],
@@ -252,12 +295,12 @@ def train_validation_test_training(
             cfg['embed_dim'],
             cfg['depths'],
             cfg['mlp_ratio'],
-            num_classes=2
+            num_classes=2,
+            task_type=task_type,
         ).to(device)
 
     elif model_name == "YOLOv11":
-        
-        model = YOLOv11Classifier(num_classes=2,model_size="yolo11m").to(device)
+        model = YOLOv11Classifier(num_classes=2, model_size="yolo11m", task_type=task_type).to(device)
         
     else:
         raise ValueError(f"Model '{model_name}' is not recognized.")
@@ -268,7 +311,9 @@ def train_validation_test_training(
     end_learning_rate_factor = cfg.get('end_learning_rate_factor', None)
     
 
-    if use_muon: 
+    if use_muon:
+        if SingleDeviceMuonWithAuxAdam is None:
+            raise ImportError("Muon optimizer requested but the 'muon' package is not installed in the current environment.")
         if model_name == "ViT":
             hidden_weights = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim >= 2]
             hidden_gains_biases = [p for p in model.vit.swinv2.encoder.parameters() if p.ndim < 2]
@@ -349,11 +394,11 @@ def train_validation_test_training(
         scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=end_learning_rate_factor, total_iters=n_epoch)
             
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.MSELoss() if task_type == "regression" else nn.CrossEntropyLoss()
     optimizer.zero_grad()
 
-    best_val_score = -float("inf")
-    best_test_score = -float("inf")
+    best_val_score = -float("inf") if higher_is_better else float("inf")
+    best_test_score = -float("inf") if higher_is_better else float("inf")
 
     best_val_test_performance_dict = {}
     best_test_performance_dict = {}
@@ -381,15 +426,15 @@ def train_validation_test_training(
             optimizer.zero_grad()
             img_arrs, labels, comp_ids = data
             img_arrs = torch.tensor(img_arrs).type(torch.FloatTensor).to(device)
-            labels = torch.tensor(labels).to(device)
+            labels = prepare_labels(labels, device, task_type)
 
             total_training_count += len(comp_ids)
 
             y_pred = model(img_arrs).to(device)
-            _, preds = torch.max(y_pred, 1)
-            all_training_labels.extend(list(labels.detach().cpu().numpy()))
-            all_training_preds.extend(list(preds.detach().cpu().numpy()))
-            all_training_probs.extend(y_pred.detach().cpu().numpy())
+            preds, pred_aux = calculate_prediction_outputs(y_pred, task_type)
+            all_training_labels.extend(list(labels.detach().cpu().view(-1).numpy()))
+            all_training_preds.extend(list(preds.detach().cpu().view(-1).numpy()))
+            all_training_probs.extend(list(pred_aux))
 
             loss = criterion(y_pred, labels)
             total_training_loss += float(loss.item())
@@ -411,14 +456,16 @@ def train_validation_test_training(
         
         training_perf_dict = dict()
         try:
-            training_perf_dict = prec_rec_f1_acc_mcc(all_training_labels, all_training_preds)
+            if task_type == "regression":
+                training_perf_dict = regression_metrics(all_training_labels, all_training_preds)
+            else:
+                training_perf_dict = prec_rec_f1_acc_mcc(all_training_labels, all_training_preds)
+                training_roc_auc = roc_auc_score(all_training_labels, np.array(all_training_probs)[:, 1])
+                training_pr_auc = average_precision_score(all_training_labels, np.array(all_training_probs)[:, 1])
+                training_perf_dict["ROC AUC"] = training_roc_auc
+                training_perf_dict["PR AUC"] = training_pr_auc
         except Exception as e:
             print(f"Problem during training performance calculation! {e}")
-        
-        training_roc_auc = roc_auc_score(all_training_labels, np.array(all_training_probs)[:, 1])
-        training_pr_auc = average_precision_score(all_training_labels, np.array(all_training_probs)[:, 1])
-        training_perf_dict["ROC AUC"] = training_roc_auc
-        training_perf_dict["PR AUC"] = training_pr_auc
 
         for metric, value in training_perf_dict.items():
             wandb.log({f"Train/{metric}": value, "epoch": epoch})
@@ -437,49 +484,48 @@ def train_validation_test_training(
             print("Validation mode:", not model.training)
 
             # --- VALIDATION ---
-            total_val_loss, total_val_count, raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs = calculate_val_test_loss(model, criterion, valid_loader, device)
+            total_val_loss, total_val_count, raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs = calculate_val_test_loss(model, criterion, valid_loader, device, task_type)
 
             all_val_comp_ids, all_val_labels, val_predictions, val_pred_probs = aggregate_predictions(
-                raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs
+                raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs, task_type
             )
             
             val_perf_dict = dict()
-            val_perf_dict["MCC"] = 0.0
-            val_predictions_tensor = torch.tensor(val_predictions)
-            all_val_labels_tensor = torch.tensor(all_val_labels)
-            
             try:
-                val_perf_dict = prec_rec_f1_acc_mcc(all_val_labels_tensor, val_predictions_tensor)
+                if task_type == "regression":
+                    val_perf_dict = regression_metrics(all_val_labels, val_predictions)
+                else:
+                    val_predictions_tensor = torch.tensor(val_predictions)
+                    all_val_labels_tensor = torch.tensor(all_val_labels)
+                    val_perf_dict = prec_rec_f1_acc_mcc(all_val_labels_tensor, val_predictions_tensor)
+                    val_roc_auc = roc_auc_score(all_val_labels, np.array(val_pred_probs)[:, 1])
+                    val_pr_auc = average_precision_score(all_val_labels, np.array(val_pred_probs)[:, 1])
+                    val_perf_dict["ROC AUC"] = val_roc_auc
+                    val_perf_dict["PR AUC"] = val_pr_auc
             except Exception as e:
-                print(f"There was a d during validation performance calculation: {e}")
-
-            
-            val_roc_auc = roc_auc_score(all_val_labels, np.array(val_pred_probs)[:, 1])
-            val_pr_auc = average_precision_score(all_val_labels, np.array(val_pred_probs)[:, 1])
-            val_perf_dict["ROC AUC"] = val_roc_auc
-            val_perf_dict["PR AUC"] = val_pr_auc
+                print(f"There was a problem during validation performance calculation: {e}")
 
             for metric, value in val_perf_dict.items():
                 wandb.log({f"Validation/{metric}": value, "epoch": epoch})
 
             total_test_loss, total_test_count, raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs = calculate_val_test_loss(
-                model, criterion, test_loader, device)
+                model, criterion, test_loader, device, task_type)
 
             all_test_comp_ids, all_test_labels, test_predictions, test_pred_probs = aggregate_predictions(
-                raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs
+                raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs, task_type
             )
 
             test_perf_dict = dict()
-            test_perf_dict["MCC"] = 0.0
-            test_predictions_tensor = torch.tensor(test_predictions)
-            all_test_labels_tensor = torch.tensor(all_test_labels)
-            
-            test_perf_dict = prec_rec_f1_acc_mcc(all_test_labels_tensor, test_predictions_tensor)
-
-            test_roc_auc = roc_auc_score(all_test_labels, np.array(test_pred_probs)[:, 1])
-            test_pr_auc = average_precision_score(all_test_labels, np.array(test_pred_probs)[:, 1])
-            test_perf_dict["ROC AUC"] = test_roc_auc
-            test_perf_dict["PR AUC"] = test_pr_auc
+            if task_type == "regression":
+                test_perf_dict = regression_metrics(all_test_labels, test_predictions)
+            else:
+                test_predictions_tensor = torch.tensor(test_predictions)
+                all_test_labels_tensor = torch.tensor(all_test_labels)
+                test_perf_dict = prec_rec_f1_acc_mcc(all_test_labels_tensor, test_predictions_tensor)
+                test_roc_auc = roc_auc_score(all_test_labels, np.array(test_pred_probs)[:, 1])
+                test_pr_auc = average_precision_score(all_test_labels, np.array(test_pred_probs)[:, 1])
+                test_perf_dict["ROC AUC"] = test_roc_auc
+                test_perf_dict["PR AUC"] = test_pr_auc
 
             for metric, value in test_perf_dict.items():
                 wandb.log({f"Test/{metric}": value, "epoch": epoch})
@@ -492,7 +538,7 @@ def train_validation_test_training(
                 current_val_score_2digit = round(val_perf_dict[selection_metric], 2)
                 best_val_score_2digit = round(best_val_score, 2)
 
-                improved = current_val_score_2digit > best_val_score_2digit
+                improved = current_val_score_2digit > best_val_score_2digit if higher_is_better else current_val_score_2digit < best_val_score_2digit
                 if improved:
                     early_stopping_counter = 0
                     print("Early stopping number : ", early_stopping_counter)
@@ -504,7 +550,7 @@ def train_validation_test_training(
                         wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
                         wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
 
-                        score_list = get_list_of_scores()
+                        score_list = get_list_of_regression_scores() if task_type == "regression" else get_list_of_scores()
                         if not best_test_performance_dict:
                             best_test_performance_dict = test_perf_dict.copy()
                         for scr in score_list:
@@ -520,7 +566,8 @@ def train_validation_test_training(
 
             current_val_score = val_perf_dict[selection_metric]
 
-            if current_val_score > best_val_score:
+            is_better = current_val_score > best_val_score if higher_is_better else current_val_score < best_val_score
+            if is_better:
                 best_val_score = current_val_score
                 best_test_score = test_perf_dict[selection_metric]
 
@@ -545,7 +592,7 @@ def train_validation_test_training(
         wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
 
         if epoch == n_epoch - 1:
-            score_list = get_list_of_scores()
+            score_list = get_list_of_regression_scores() if task_type == "regression" else get_list_of_scores()
             for scr in score_list:
                 best_val_test_result_fl.write("Test {}:\t{}\n".format(scr, best_test_performance_dict[scr]))
             best_val_test_prediction_fl.write(best_test_predictions)

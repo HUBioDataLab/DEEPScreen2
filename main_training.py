@@ -196,7 +196,14 @@ parser.add_argument(
     '--selection_metric',
     type=str,
     default='auroc',
-    help='Metric used to select the best validation model. Options [auroc, auprc, mcc] (default: auroc)')
+    help="Metric used to select the best validation model. Classification options: [auroc, auprc, mcc]. Regression options: [rae, mae, r2, spearman, kendall].")
+
+parser.add_argument(
+    '--task_type',
+    type=str,
+    default='classification',
+    choices=['classification', 'regression'],
+    help="Task type for model head, loss, and evaluation flow.")
 
 # ============================
 # Batch & Parallelization
@@ -280,6 +287,7 @@ def sweep():
         args.patience,
         args.warmup,
         args.selection_metric,
+        args.task_type,
         args.sweep,
         scheduler = args.with_scheduler,
         use_muon = args.muon,
@@ -356,6 +364,7 @@ def main():
             args.patience,
             args.warmup,
             args.selection_metric,
+            args.task_type,
             args.sweep,
             scheduler=args.with_scheduler,
             use_muon = args.muon,

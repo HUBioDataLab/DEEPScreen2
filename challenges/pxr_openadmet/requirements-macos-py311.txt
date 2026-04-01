@@ -1,0 +1,24 @@
+# DEEPScreen2 Apple Silicon / macOS (M1 Pro) environment
+# Base target: Python 3.11
+# Notes:
+# - `asyncio` is stdlib and should not be installed from PyPI.
+# - Install Muon separately only if needed for ViT experiments.
+# - ultralytics is optional for current PXR work.
+
+numpy<2
+pandas
+opencv-python
+torch
+torchvision
+scikit-learn
+cairosvg
+transformers
+chemprop
+matplotlib
+wandb
+aiohttp
+scipy
+rdkit
+pytdc
+tqdm
+ultralytics

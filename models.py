@@ -6,8 +6,9 @@ from transformers import Swinv2Config, Swinv2ForImageClassification
 from ultralytics import YOLO
 
 class CNNModel1(nn.Module):
-    def __init__(self, fully_layer_1, fully_layer_2, drop_rate):
+    def __init__(self, fully_layer_1, fully_layer_2, drop_rate, task_type="classification"):
         super(CNNModel1, self).__init__()
+        self.task_type = task_type
 
         self.conv1 = nn.Conv2d(3, 32, 2)
         self.bn1 = nn.BatchNorm2d(32)
@@ -26,7 +27,8 @@ class CNNModel1(nn.Module):
         self.fc1 = nn.Linear(#32*5*5,
                              32*8*8, fully_layer_1)
         self.fc2 = nn.Linear(fully_layer_1, fully_layer_2)
-        self.fc3 = nn.Linear(fully_layer_2, 2)
+        output_dim = 2 if task_type == "classification" else 1
+        self.fc3 = nn.Linear(fully_layer_2, output_dim)
 
     def forward(self, x):
         #print(x.shape)
@@ -57,8 +59,9 @@ class CNNModel1(nn.Module):
 # TODO: Create other models
 
 class ViT(nn.Module):
-    def __init__(self, window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,embed_dim,depths,mlp_ratio,num_classes = 2):
+    def __init__(self, window_size,hidden_size,att_drop,drop_path_rate,drop_rate,layer_norm_eps,encoder_stride,embed_dim,depths,mlp_ratio,num_classes=2, task_type="classification"):
         super(ViT, self).__init__()
+        self.task_type = task_type
 
         configuration = Swinv2Config()
         configuration.hidden_size = hidden_size
@@ -71,9 +74,10 @@ class ViT(nn.Module):
         configuration.encoder_stride = int(encoder_stride)
         configuration.embed_dim = int(embed_dim)
         configuration.depths = depths
-        configuration.mlp_ratio = mlp_ratio
+        configuration.mlp_ratio = float(mlp_ratio)
         
-        configuration.num_labels = num_classes
+        configuration.num_labels = 1 if task_type == "regression" else num_classes
+        configuration.problem_type = "regression" if task_type == "regression" else "single_label_classification"
 
         model = Swinv2ForImageClassification(configuration)
         self.vit = model
@@ -92,19 +96,22 @@ class ViT(nn.Module):
     
 
 class YOLOv11Classifier(nn.Module):
-    def __init__(self, num_classes, model_size):
+    def __init__(self, num_classes=2, model_size="yolo11m", task_type="classification"):
         super().__init__()
+        self.task_type = task_type
         yolo = YOLO(f"{model_size}-cls.pt")
         head = yolo.model.model[-1]
+        output_dim = 1 if task_type == "regression" else num_classes
         if hasattr(head, "linear"):
             in_features = head.linear.in_features
-            head.linear = nn.Linear(in_features, num_classes)
+            head.linear = nn.Linear(in_features, output_dim)
         elif hasattr(head, "fc"):
             in_features = head.fc.in_features
-            head.fc = nn.Linear(in_features, num_classes)
+            head.fc = nn.Linear(in_features, output_dim)
         self.model = yolo.model
+
     def forward(self, x):
         out = self.model(x)
         if isinstance(out, (tuple, list)):
-            out = out[0] 
+            out = out[0]
         return out

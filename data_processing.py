@@ -107,7 +107,12 @@ def initialize_dirs(targetid , target_prediction_dataset_path):
 
 def process_smiles(smiles_data,augmentation_angle):
 
-    current_smiles, compound_id, target_prediction_dataset_path, targetid,act_inact = smiles_data
+    if len(smiles_data) == 5:
+        current_smiles, compound_id, target_prediction_dataset_path, targetid, _ = smiles_data
+    elif len(smiles_data) == 4:
+        current_smiles, compound_id, target_prediction_dataset_path, targetid = smiles_data
+    else:
+        raise ValueError(f"Unexpected smiles_data length: {len(smiles_data)}")
     rotations = [(0, "_0"), *[(angle, f"_{angle}") for angle in range(augmentation_angle, 360, augmentation_angle)]]
     try:
 
@@ -129,8 +134,14 @@ def process_smiles(smiles_data,augmentation_angle):
     
 def generate_images(smiles_file, targetid, max_cores, target_prediction_dataset_path, augmentation_angle):
     df = pd.read_csv(smiles_file)
-    smiles_data_list = [(row['canonical_smiles'], row['molecule_chembl_id'], target_prediction_dataset_path, targetid, row['act_inact_id']) for _, row in df.iterrows()]
-    
+
+    smiles_data_list = []
+    for _, row in df.iterrows():
+        if 'act_inact_id' in df.columns:
+            smiles_data_list.append((row['canonical_smiles'], row['molecule_chembl_id'], target_prediction_dataset_path, targetid, row['act_inact_id']))
+        else:
+            smiles_data_list.append((row['canonical_smiles'], row['molecule_chembl_id'], target_prediction_dataset_path, targetid))
+
     black_list = []
     with ProcessPoolExecutor(max_workers=max_cores) as executor:
         futures = [executor.submit(process_smiles, s, augmentation_angle) for s in smiles_data_list]
@@ -949,6 +960,161 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
     return tr_act, vl_act, ts_act, tr_inact, vl_inact, ts_inact
 
 
+def regression_train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_ratios=(0.8, 0.1, 0.1), seed=42):
+    if 360 % augmentation_angle != 0:
+        raise ValueError(
+            f"Invalid augmentation_angle: {augmentation_angle}. "
+            f"360 must be perfectly divisible by the angle to ensure full rotation coverage."
+        )
+
+    df = pd.read_csv(smiles_file)
+    required_columns = {"canonical_smiles", "molecule_chembl_id", "target_value"}
+    missing_columns = required_columns - set(df.columns)
+    if missing_columns:
+        raise ValueError(f"Regression smiles file is missing columns: {sorted(missing_columns)}")
+
+    print("Regression splitting process started...")
+    print(f"Total compounds in pool: {len(df)}")
+
+    root_ids = df["molecule_chembl_id"].tolist()
+    smiles_list = df["canonical_smiles"].tolist()
+    target_map = dict(zip(df["molecule_chembl_id"], df["target_value"].astype(float)))
+
+    def expand_with_targets(id_list):
+        augmented = []
+        for root_id in id_list:
+            target_value = float(target_map[root_id])
+            for angle in range(0, 360, augmentation_angle):
+                augmented.append([f"{root_id}_{angle}", target_value])
+        return augmented
+
+    if scaffold_split:
+        print("--- Mode: Scaffold Balanced Regression Split (Grouping by Molecule) ---")
+        mols = [Chem.MolFromSmiles(s) for s in smiles_list]
+        indices = make_split_indices(mols, split="scaffold_balanced", sizes=split_ratios, seed=seed)
+
+        train_idx = indices[0][0] if isinstance(indices[0][0], (list, np.ndarray)) else indices[0]
+        val_idx = indices[1][0] if isinstance(indices[1][0], (list, np.ndarray)) else indices[1]
+        test_idx = indices[2][0] if isinstance(indices[2][0], (list, np.ndarray)) else indices[2]
+
+        train_roots = [root_ids[i] for i in train_idx]
+        val_roots = [root_ids[i] for i in val_idx]
+        test_roots = [root_ids[i] for i in test_idx]
+    else:
+        print("--- Mode: Full Random Regression Split (Grouping by Molecule) ---")
+        shuffled_ids = root_ids[:]
+        rng = random.Random(seed)
+        rng.shuffle(shuffled_ids)
+
+        n = len(shuffled_ids)
+        train_end = int(n * split_ratios[0])
+        val_end = train_end + int(n * split_ratios[1])
+
+        train_roots = shuffled_ids[:train_end]
+        val_roots = shuffled_ids[train_end:val_end]
+        test_roots = shuffled_ids[val_end:]
+
+    train_entries = expand_with_targets(train_roots)
+    val_entries = expand_with_targets(val_roots)
+    test_entries = expand_with_targets(test_roots)
+
+    print("-" * 35)
+    print(f"Augmented Train entries: {len(train_entries)}")
+    print(f"Augmented Val entries:   {len(val_entries)}")
+    print(f"Augmented Test entries:  {len(test_entries)}")
+    print("-" * 35)
+
+    return train_entries, val_entries, test_entries
+
+
+def create_regression_training_dataset_from_csv(
+    input_csv,
+    target_id,
+    target_prediction_dataset_path,
+    max_cores,
+    scaffold,
+    augmentation_angle,
+    target_column="pEC50",
+    smiles_column="SMILES",
+    compound_id_column="Molecule Name",
+    split_ratios=(0.8, 0.1, 0.1),
+    seed=42,
+):
+    df = pd.read_csv(input_csv).copy()
+
+    required_columns = {smiles_column, target_column}
+    missing_columns = required_columns - set(df.columns)
+    if missing_columns:
+        raise ValueError(f"Input CSV is missing required columns: {sorted(missing_columns)}")
+
+    if compound_id_column in df.columns:
+        df = df.rename(columns={compound_id_column: "molecule_chembl_id"})
+    else:
+        df["molecule_chembl_id"] = [f"{target_id}_{i+1}" for i in range(len(df))]
+
+    df = df.rename(columns={smiles_column: "canonical_smiles", target_column: "target_value"})
+    df = df[["molecule_chembl_id", "canonical_smiles", "target_value"]].copy()
+    df = df.dropna(subset=["molecule_chembl_id", "canonical_smiles", "target_value"])
+    df["molecule_chembl_id"] = df["molecule_chembl_id"].astype(str)
+    df["canonical_smiles"] = df["canonical_smiles"].astype(str)
+    df["target_value"] = df["target_value"].astype(float)
+    df = df.drop_duplicates(subset=["molecule_chembl_id", "canonical_smiles"], keep="first")
+    df = df.sort_values(by=["canonical_smiles", "molecule_chembl_id"]).reset_index(drop=True)
+
+    target_dir = os.path.join(target_prediction_dataset_path, target_id)
+    os.makedirs(target_dir, exist_ok=True)
+
+    smiles_file = os.path.join(target_dir, "smilesfile.csv")
+    df.to_csv(smiles_file, index=False)
+
+    initialize_dirs(target_id, target_prediction_dataset_path)
+    generate_images(smiles_file, target_id, max_cores, target_prediction_dataset_path, augmentation_angle)
+
+    cleaned_df = pd.read_csv(smiles_file)
+    train_entries, val_entries, test_entries = regression_train_val_test_split(
+        smiles_file,
+        scaffold,
+        augmentation_angle,
+        split_ratios=split_ratios,
+        seed=seed,
+    )
+
+    valid_augmented_ids = {f"{cid}_{angle}" for cid in cleaned_df["molecule_chembl_id"].tolist() for angle in range(0, 360, augmentation_angle)}
+    train_entries = [entry for entry in train_entries if entry[0] in valid_augmented_ids]
+    val_entries = [entry for entry in val_entries if entry[0] in valid_augmented_ids]
+    test_entries = [entry for entry in test_entries if entry[0] in valid_augmented_ids]
+
+    split_dict = {
+        "training": train_entries,
+        "validation": val_entries,
+        "test": test_entries,
+    }
+
+    dict_output_path = os.path.join(target_dir, "train_val_test_dict.json")
+    with open(dict_output_path, "w") as fp:
+        json.dump(split_dict, fp)
+
+    metadata = {
+        "task_type": "regression",
+        "target_id": target_id,
+        "input_csv": str(input_csv),
+        "target_column": target_column,
+        "smiles_column": smiles_column,
+        "compound_id_column": compound_id_column,
+        "scaffold": scaffold,
+        "augmentation_angle": augmentation_angle,
+        "split_ratios": list(split_ratios),
+        "seed": seed,
+        "n_compounds": int(len(cleaned_df)),
+        "n_training_entries": int(len(train_entries)),
+        "n_validation_entries": int(len(val_entries)),
+        "n_test_entries": int(len(test_entries)),
+    }
+    with open(os.path.join(target_dir, "regression_dataset_metadata.json"), "w") as fp:
+        json.dump(metadata, fp, indent=2)
+
+    print(f"Regression dataset ready at {target_dir}")
+    return metadata
 
 
 class DEEPScreenDataset(Dataset):
@@ -1081,7 +1247,7 @@ class PredictionDataset(Dataset):
         # Return torch tensor immediately
         return torch.tensor(img_arr).float(), label, comp_id
 
-def load_deepscreen_labels(target_id, parent_path,split):
+def load_deepscreen_labels(target_id, parent_path, split, task_type="classification"):
     """
     Parses 'train_val_test_dict.json' located in the target folder.
     Structure: {"training": [["ID", 1]...], "validation": ...}
@@ -1104,7 +1270,7 @@ def load_deepscreen_labels(target_id, parent_path,split):
             for item in sample_list:
                 if len(item) >= 2:
                     comp_id = item[0]
-                    label = int(item[1])
+                    label = float(item[1]) if task_type == "regression" else int(item[1])
                     comp_id = re.sub(r'_\d+$', '', comp_id)
                     label_dict[comp_id] = label
         return label_dict
