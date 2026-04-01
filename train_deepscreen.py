@@ -79,13 +79,18 @@ def save_best_model_predictions(experiment_name, epoch, validation_scores_dict, 
     return validation_scores_dict, best_test_performance_dict, best_test_predictions, str_test_predictions
 
 def get_device(cuda_selection):
-    device = "cpu"
-    if use_gpu:
-        print("GPU is available on this device!")
-        device = "cuda:"+str(cuda_selection)
-    else:
-        print("CPU is available on this device!")
-    return device
+    if torch.cuda.is_available():
+        device = f"cuda:{cuda_selection}"
+        print(f"CUDA is available on this device. Using {device}!")
+        return device
+
+    if torch.backends.mps.is_available():
+        device = "mps"
+        print("Apple Metal Performance Shaders (MPS) is available. Using mps!")
+        return device
+
+    print("Neither CUDA nor MPS is available. Using CPU!")
+    return "cpu"
 
 
 def prepare_labels(labels, device, task_type):

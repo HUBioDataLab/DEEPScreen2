@@ -24,7 +24,7 @@ def main():
     parser.add_argument("--entity_name", type=str, default=None)
     parser.add_argument("--run_id", type=str, default="None")
     parser.add_argument("--model_save", type=str, default="None")
-    parser.add_argument("--cuda", type=int, default=0)
+    parser.add_argument("--cuda", type=int, default=0, help="CUDA device index if CUDA is available; ignored on MPS/CPU.")
     parser.add_argument("--selection_metric", type=str, default="rae", choices=["rae", "mae", "r2", "spearman", "kendall"])
     parser.add_argument("--early_stopping", action="store_true")
     parser.add_argument("--patience", type=int, default=10)

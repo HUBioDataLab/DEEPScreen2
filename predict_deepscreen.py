@@ -31,6 +31,14 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.pyplot as plt
 
 
+def get_device(cuda_selection):
+    if torch.cuda.is_available():
+        return f"cuda:{cuda_selection}"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def process_smiles_for_prediction(data):
     """
     Generates images from SMILES if they don't exist.
@@ -228,7 +236,7 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
     if generate_maps and not os.path.exists(maps_output_dir):
         os.makedirs(maps_output_dir)
 
-    device = f"cuda:{cuda_selection}" if torch.cuda.is_available() else "cpu"
+    device = get_device(cuda_selection)
     print(f"Using device: {device}")
     
     # Load Model
