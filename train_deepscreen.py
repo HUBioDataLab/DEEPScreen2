@@ -1,4 +1,5 @@
 import os
+import gc
 
 import torch
 
@@ -93,6 +94,15 @@ def get_device(cuda_selection):
     return "cpu"
 
 
+
+
+def clear_device_cache(device):
+    gc.collect()
+    if isinstance(device, str) and device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    elif device == "mps" and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+
 def prepare_labels(labels, device, task_type):
     if task_type == "regression":
         return torch.tensor(labels, dtype=torch.float32, device=device).view(-1, 1)
@@ -162,14 +172,16 @@ def calculate_val_test_loss(model, criterion, data_loader, device, task_type):
         total_count += len(comp_ids)
         y_pred = model(img_arrs).to(device)
         loss = criterion(y_pred, labels)
-        total_loss += float(loss.item())
+        batch_size = len(comp_ids)
+        total_loss += float(loss.item()) * batch_size
         all_comp_ids.extend(list(comp_ids))
         preds, pred_aux = calculate_prediction_outputs(y_pred, task_type)
         all_labels.extend(list(labels.detach().cpu().view(-1).numpy()))
         all_predictions.extend(list(preds.detach().cpu().view(-1).numpy()))
         all_pred_probs.extend(list(pred_aux))
 
-    return total_loss, total_count, all_comp_ids, all_labels, all_predictions, all_pred_probs
+    mean_loss = float(total_loss / total_count) if total_count > 0 else 0.0
+    return mean_loss, total_count, all_comp_ids, all_labels, all_predictions, all_pred_probs
 
 def train_validation_test_training(
     target_id, model_name, config, experiment_name, cuda_selection, run_id, model_save, project_name, entity,
@@ -275,6 +287,7 @@ def train_validation_test_training(
 
     # Data Loaders
     train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(target_id, cfg['bs'])
+    has_test_split = len(test_loader.dataset) > 0
 
     # ---- 5. DYNAMIC MODEL LOADING ----
     # This is the "Bugless" part. We map model names to classes and specific args.
@@ -421,6 +434,7 @@ def train_validation_test_training(
         print("Epoch :{}".format(epoch))
         model.train()
         batch_number = 0
+        all_training_comp_ids = []
         all_training_labels = []
         all_training_preds = []
         all_training_probs = []
@@ -434,6 +448,7 @@ def train_validation_test_training(
             labels = prepare_labels(labels, device, task_type)
 
             total_training_count += len(comp_ids)
+            all_training_comp_ids.extend(list(comp_ids))
 
             y_pred = model(img_arrs).to(device)
             preds, pred_aux = calculate_prediction_outputs(y_pred, task_type)
@@ -442,7 +457,8 @@ def train_validation_test_training(
             all_training_probs.extend(list(pred_aux))
 
             loss = criterion(y_pred, labels)
-            total_training_loss += float(loss.item())
+            batch_size = len(comp_ids)
+            total_training_loss += float(loss.item()) * batch_size
             loss.backward()
             optimizer.step()
 
@@ -455,18 +471,22 @@ def train_validation_test_training(
         if scheduler:
             scheduler.step()
  
-        print("Epoch {} training loss:".format(epoch), total_training_loss)
+        mean_training_loss = float(total_training_loss / total_training_count) if total_training_count > 0 else 0.0
+        print("Epoch {} training loss:".format(epoch), mean_training_loss)
         
-        wandb.log({"Loss/train": total_training_loss, "epoch": epoch})
+        wandb.log({"Loss/train": mean_training_loss, "epoch": epoch})
         
         training_perf_dict = dict()
         try:
+            agg_train_comp_ids, agg_train_labels, agg_train_predictions, agg_train_probs = aggregate_predictions(
+                all_training_comp_ids, all_training_labels, all_training_preds, all_training_probs, task_type
+            )
             if task_type == "regression":
-                training_perf_dict = regression_metrics(all_training_labels, all_training_preds)
+                training_perf_dict = regression_metrics(agg_train_labels, agg_train_predictions)
             else:
-                training_perf_dict = prec_rec_f1_acc_mcc(all_training_labels, all_training_preds)
-                training_roc_auc = roc_auc_score(all_training_labels, np.array(all_training_probs)[:, 1])
-                training_pr_auc = average_precision_score(all_training_labels, np.array(all_training_probs)[:, 1])
+                training_perf_dict = prec_rec_f1_acc_mcc(agg_train_labels, agg_train_predictions)
+                training_roc_auc = roc_auc_score(agg_train_labels, np.array(agg_train_probs)[:, 1])
+                training_pr_auc = average_precision_score(agg_train_labels, np.array(agg_train_probs)[:, 1])
                 training_perf_dict["ROC AUC"] = training_roc_auc
                 training_perf_dict["PR AUC"] = training_pr_auc
         except Exception as e:
@@ -513,27 +533,32 @@ def train_validation_test_training(
             for metric, value in val_perf_dict.items():
                 wandb.log({f"Validation/{metric}": value, "epoch": epoch})
 
-            total_test_loss, total_test_count, raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs = calculate_val_test_loss(
-                model, criterion, test_loader, device, task_type)
-
-            all_test_comp_ids, all_test_labels, test_predictions, test_pred_probs = aggregate_predictions(
-                raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs, task_type
-            )
-
+            total_test_loss = 0.0
+            total_test_count = 0
+            all_test_comp_ids, all_test_labels, test_predictions, test_pred_probs = [], [], [], []
             test_perf_dict = dict()
-            if task_type == "regression":
-                test_perf_dict = regression_metrics(all_test_labels, test_predictions)
-            else:
-                test_predictions_tensor = torch.tensor(test_predictions)
-                all_test_labels_tensor = torch.tensor(all_test_labels)
-                test_perf_dict = prec_rec_f1_acc_mcc(all_test_labels_tensor, test_predictions_tensor)
-                test_roc_auc = roc_auc_score(all_test_labels, np.array(test_pred_probs)[:, 1])
-                test_pr_auc = average_precision_score(all_test_labels, np.array(test_pred_probs)[:, 1])
-                test_perf_dict["ROC AUC"] = test_roc_auc
-                test_perf_dict["PR AUC"] = test_pr_auc
 
-            for metric, value in test_perf_dict.items():
-                wandb.log({f"Test/{metric}": value, "epoch": epoch})
+            if has_test_split:
+                total_test_loss, total_test_count, raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs = calculate_val_test_loss(
+                    model, criterion, test_loader, device, task_type)
+
+                all_test_comp_ids, all_test_labels, test_predictions, test_pred_probs = aggregate_predictions(
+                    raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs, task_type
+                )
+
+                if task_type == "regression":
+                    test_perf_dict = regression_metrics(all_test_labels, test_predictions)
+                else:
+                    test_predictions_tensor = torch.tensor(test_predictions)
+                    all_test_labels_tensor = torch.tensor(all_test_labels)
+                    test_perf_dict = prec_rec_f1_acc_mcc(all_test_labels_tensor, test_predictions_tensor)
+                    test_roc_auc = roc_auc_score(all_test_labels, np.array(test_pred_probs)[:, 1])
+                    test_pr_auc = average_precision_score(all_test_labels, np.array(test_pred_probs)[:, 1])
+                    test_perf_dict["ROC AUC"] = test_roc_auc
+                    test_perf_dict["PR AUC"] = test_pr_auc
+
+                for metric, value in test_perf_dict.items():
+                    wandb.log({f"Test/{metric}": value, "epoch": epoch})
 
 
             if early_stopping and epoch >= warmup:
@@ -553,28 +578,36 @@ def train_validation_test_training(
                     if early_stopping_counter >= patience:
 
                         wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
-                        wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
+                        if has_test_split:
+                            wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
 
-                        score_list = get_list_of_regression_scores() if task_type == "regression" else get_list_of_scores()
-                        if not best_test_performance_dict:
-                            best_test_performance_dict = test_perf_dict.copy()
-                        for scr in score_list:
-                            best_val_test_result_fl.write("Test {}:\t{}\n".format(scr, best_test_performance_dict[scr]))
-                        best_val_test_prediction_fl.write(best_test_predictions)
+                        if has_test_split:
+                            score_list = get_list_of_regression_scores() if task_type == "regression" else get_list_of_scores()
+                            if not best_test_performance_dict:
+                                best_test_performance_dict = test_perf_dict.copy()
+                            for scr in score_list:
+                                best_val_test_result_fl.write("Test {}:\t{}\n".format(scr, best_test_performance_dict[scr]))
+                            best_val_test_prediction_fl.write(best_test_predictions)
+                        else:
+                            best_val_test_result_fl.write("No internal test split configured.\n")
+                            best_val_test_prediction_fl.write("No internal test split configured.\n")
 
                         best_val_test_result_fl.close()
                         best_val_test_prediction_fl.close()
 
                         print(f"Early stopping triggered at epoch {epoch}")
+                        clear_device_cache(device)
                         wandb.finish()
                         return
 
             current_val_score = val_perf_dict[selection_metric]
 
+            clear_device_cache(device)
+
             is_better = current_val_score > best_val_score if higher_is_better else current_val_score < best_val_score
             if is_better:
                 best_val_score = current_val_score
-                best_test_score = test_perf_dict[selection_metric]
+                best_test_score = test_perf_dict[selection_metric] if has_test_split else None
 
                 validation_scores_dict, best_test_performance_dict, best_test_predictions, str_test_predictions = save_best_model_predictions(
                     experiment_name,
@@ -594,17 +627,23 @@ def train_validation_test_training(
 
             
         wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
-        wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
+        if has_test_split:
+            wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
 
         if epoch == n_epoch - 1:
-            score_list = get_list_of_regression_scores() if task_type == "regression" else get_list_of_scores()
-            for scr in score_list:
-                best_val_test_result_fl.write("Test {}:\t{}\n".format(scr, best_test_performance_dict[scr]))
-            best_val_test_prediction_fl.write(best_test_predictions)
+            if has_test_split:
+                score_list = get_list_of_regression_scores() if task_type == "regression" else get_list_of_scores()
+                for scr in score_list:
+                    best_val_test_result_fl.write("Test {}:\t{}\n".format(scr, best_test_performance_dict[scr]))
+                best_val_test_prediction_fl.write(best_test_predictions)
+            else:
+                best_val_test_result_fl.write("No internal test split configured.\n")
+                best_val_test_prediction_fl.write("No internal test split configured.\n")
 
             best_val_test_result_fl.close()
             best_val_test_prediction_fl.close()
         
         
     
+    clear_device_cache(device)
     wandb.finish()

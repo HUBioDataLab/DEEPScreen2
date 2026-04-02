@@ -22,15 +22,15 @@ parameters:
 ######################################### Required for CNN
   fc1: 128 # default 128
 
-  fc2: 256 # default 128
+  fc2: 64 # tuned for pxr_openadmet anti-overfitting run
 
 ######################################### Required for Both
 
   epoch: 80
 
-  bs: 32
+  bs: 128
 
-  dropout: 0.2
+  dropout: 0.3
 
   learning_rate: 1e-5
 
