@@ -112,7 +112,19 @@ DEEPScreen2 supports automated hyperparameter tuning using Weights & Biases (Wan
     ```
     This will initialize a WandB sweep agent and start running experiments based on the configuration.
 
-### 5. Prediction / Inference
+### 5. Fetching Results from WandB
+
+After running sweeps or multiple training jobs, you can easily fetch and summarize your best experiments using the provided utility script. This script automatically finds the best validation metric (e.g., ROC AUC) and its corresponding test metric for a given project or group.
+
+```bash
+python utils/wandb_results.py \
+    --entity "your_wandb_entity" \
+    --project "your_project_name" \
+    --group "your_sweep_or_experiment_group"
+    --val_metric "name_of_your_validation_metric"
+```
+
+### 6. Prediction / Inference
 
 Once a model is trained, use `predict_deepscreen.py` to screen new molecules.
 
@@ -143,6 +155,8 @@ DEEPScreen2/
 │   ├── config.yaml         # Default training & runtime 
 │   ├── sweep_cnn.yaml      # WandB sweep configuration for CNN
 |   └── sweep_vit.yaml      # WandB sweep configuration for ViT 
+├── utils/                  # Utility scripts and helper functions
+│   └── wandb_results.py    # CLI tool to fetch best metrics from W&B
 ├── main_training.py        # Main entry point for training
 ├── train_deepscreen.py     # Training logic and loops
 ├── predict_deepscreen.py   # Inference script
