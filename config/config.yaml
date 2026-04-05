@@ -22,7 +22,7 @@ parameters:
 ######################################### Required for CNN
   fc1: 128 # default 128
 
-  fc2: 256 # default 128
+  fc2: 256 # default 256
 
 ######################################### Required for Both
 
