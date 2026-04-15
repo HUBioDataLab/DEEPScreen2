@@ -293,7 +293,20 @@ def main():
     repeat = 1
     if args.benchmark: 
         repeat = 5
+    config_folder = args.config_folder
 
+    if args.sweep:
+        if "CNN" in args.model:
+            yaml_file = "sweep_cnn.yaml"
+        else:
+            yaml_file = "sweep_vit.yaml"
+
+        with open(os.path.join(config_folder,yaml_file)) as f:
+            sweep_config = yaml.safe_load(f)
+    else:
+        with open(os.path.join(config_folder,"config.yaml")) as f:
+            config = yaml.safe_load(f)
+            
     for i in range(repeat):   
         # Create platform-independent path
         target_training_dataset_path = Path(args.training_dir).resolve()
@@ -319,16 +332,7 @@ def main():
             args.email,
             i)
 
-        config_folder = args.config_folder
         if args.sweep:
-            # 1. Determine which YAML file to use
-            if "CNN" in args.model:
-                yaml_file = "sweep_cnn.yaml"
-            else:
-                yaml_file = "sweep_vit.yaml"
-
-            with open(os.path.join(config_folder,yaml_file)) as f:
-                sweep_config = yaml.safe_load(f)
 
             sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
 
@@ -340,8 +344,7 @@ def main():
             exp_name = args.en
             if args.dataset == "tdc" and args.benchmark:
                 exp_name = f"{exp_name}_seed_{i}"
-            with open(os.path.join(config_folder,"config.yaml")) as f:
-                config = yaml.safe_load(f)
+
             train_validation_test_training(
             args.target_id,
             args.model,

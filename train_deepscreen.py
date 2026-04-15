@@ -23,15 +23,15 @@ import wandb
 import matplotlib.pyplot as plt
 import cv2
 import shutil
-
+from tqdm import tqdm
 from muon import SingleDeviceMuonWithAuxAdam
-torch.backends.cudnn.benchmark = False
-torch.use_deterministic_algorithms(True)
 
 warnings.filterwarnings(action='ignore')
 torch.manual_seed(123)
 np.random.seed(123)
 use_gpu = torch.cuda.is_available()
+torch.backends.cudnn.benchmark = False
+torch.use_deterministic_algorithms(True)
 
 sep = os.sep
 
@@ -42,8 +42,6 @@ project_file_path = f"{current_path_beginning}DEEPScreen{current_path_version}"
 training_files_path = f"{project_file_path}{sep}training_files"
 result_files_path = f"{project_file_path}{sep}result_files"
 trained_models_path = f"{project_file_path}{sep}trained_models"
-
-
 
 def save_best_model_predictions(experiment_name, epoch, validation_scores_dict, test_scores_dict, model, project_file_path, target_id, str_arguments,
                                 all_test_comp_ids, test_labels, test_predictions,global_step,optimizer):
@@ -87,8 +85,7 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
     all_predictions = []
     all_pred_probs = []
 
-    for i, data in enumerate(data_loader):
-
+    for i, data in enumerate(tqdm(data_loader)):
         img_arrs, labels, comp_ids = data
         img_arrs, labels = torch.tensor(img_arrs).type(torch.FloatTensor).to(device), torch.tensor(labels).to(device)
         total_count += len(comp_ids)
@@ -99,10 +96,11 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
         _, preds = torch.max(y_pred, 1)
         all_labels.extend(list(labels.detach().cpu().numpy()))
         all_predictions.extend(list(preds.detach().cpu().numpy()))
-        all_pred_probs.extend(y_pred.detach().cpu().numpy())
+        
+        probs = torch.softmax(y_pred, dim=1)  # ✅ logit → prob
+        all_pred_probs.extend(probs.detach().cpu().numpy())
 
-
-    return total_loss, total_count, all_comp_ids, all_labels, all_predictions,all_pred_probs
+    return total_loss, total_count, all_comp_ids, all_labels, all_predictions, all_pred_probs
 
 def aggregate_predictions(comp_ids, labels, predictions, pred_probs):
 
@@ -256,9 +254,7 @@ def train_validation_test_training(
         ).to(device)
 
     elif model_name == "YOLOv11":
-        
         model = YOLOv11Classifier(num_classes=2,model_size="yolo11m").to(device)
-        
     else:
         raise ValueError(f"Model '{model_name}' is not recognized.")
     # ---- 6. OPTIMIZER, SCHEDULER, CRITERION ----
@@ -315,7 +311,6 @@ def train_validation_test_training(
             ]
 
             optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
-
         else:
 
             hidden_weights = [p for p in model.parameters() if p.ndim >= 2]
@@ -376,7 +371,7 @@ def train_validation_test_training(
         all_training_probs = []
         print("Training mode:", model.training)
 
-        for i, data in enumerate(train_loader):
+        for i, data in enumerate(tqdm(train_loader)):
             batch_number += 1
             optimizer.zero_grad()
             img_arrs, labels, comp_ids = data
@@ -389,9 +384,11 @@ def train_validation_test_training(
             _, preds = torch.max(y_pred, 1)
             all_training_labels.extend(list(labels.detach().cpu().numpy()))
             all_training_preds.extend(list(preds.detach().cpu().numpy()))
-            all_training_probs.extend(y_pred.detach().cpu().numpy())
 
-            loss = criterion(y_pred, labels)
+            probs = torch.softmax(y_pred, dim=1)
+            all_training_probs.extend(probs.detach().cpu().numpy())
+
+            loss = criterion(y_pred, labels)  
             total_training_loss += float(loss.item())
             loss.backward()
             optimizer.step()

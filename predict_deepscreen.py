@@ -1,18 +1,13 @@
 import os
-from pyexpat import model
 import torch
 import numpy as np
-import pandas as pd
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from models import CNNModel1, ViT
 from data_processing import save_comp_imgs_from_smiles, initialize_dirs
-from torch.utils.data import Dataset, DataLoader
 import cv2
 import json
-from concurrent.futures import ProcessPoolExecutor
 import argparse
-import math
 from tqdm import tqdm
 import yaml
 from types import SimpleNamespace
@@ -21,14 +16,6 @@ from sklearn.metrics import (
     roc_auc_score, average_precision_score, accuracy_score, 
     precision_score, recall_score, f1_score, matthews_corrcoef, confusion_matrix
 )
-import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-
-# örnek kullanım
-import matplotlib.pyplot as plt
-
 
 def process_smiles_for_prediction(data):
     """
@@ -56,64 +43,27 @@ def process_smiles_for_prediction(data):
         print(f"Error processing {compound_id}: {e}")
         return None
     return compound_id
+def _robust_normalize(data, p_low=1, p_high=99):
+    vmin = np.percentile(data, p_low)
+    vmax = np.percentile(data, p_high)
+    if vmax - vmin < 1e-9:
+        return np.zeros_like(data)
+    data = np.clip(data, vmin, vmax)
+    return (data - vmin) / (vmax - vmin)
+
+
 def save_single_heatmap_overlay_attention(
-        heatmap, 
-        img_tensor, 
-        output_path, 
-        threshold_ratio=0.85): 
-    
-    import cv2 
-    import matplotlib.pyplot as plt 
-    import numpy as np 
-    from matplotlib.colors import LinearSegmentedColormap, Normalize
-    from matplotlib.cm import ScalarMappable
-
-    img = img_tensor.permute(1, 2, 0).detach().cpu().numpy()
-    img = np.clip(img, 0, 1)
-    h, w = img.shape[:2]
-
-    heatmap_proc = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
-    heatmap_resized = cv2.resize(heatmap_proc, (w, h), interpolation=cv2.INTER_CUBIC)
-
-    colors = [(1, 1, 1), (1, 0, 0)]
-    custom_cmap = LinearSegmentedColormap.from_list("transparent_red", colors)
-
-    mask = (heatmap_resized >= threshold_ratio)
-    
-    heatmap_grad = np.zeros_like(heatmap_resized)
-    heatmap_grad[mask] = (heatmap_resized[mask] - threshold_ratio) / (1.0 - threshold_ratio + 1e-8)
-
-    heatmap_rgb = custom_cmap(heatmap_grad)[:, :, :3]
-
-    # Multiply Blending
-    final_overlay = heatmap_rgb * img
-    final_overlay = np.clip(final_overlay, 0, 1)
-
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.imshow(final_overlay)
-    ax.axis('off')
-
-    norm = Normalize(vmin=threshold_ratio, vmax=1)
-    sm = ScalarMappable(norm=norm, cmap=custom_cmap)
-    sm.set_array([])
-    
-    cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("Attention Intensity (Thresholded)")
-
-    plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
-    plt.close(fig)
-
-def save_single_heatmap_overlay(
         heatmap,
         img_tensor,
         output_path,
-        threshold_ratio=0.1,
-        dilation_size=5,
-        blur_sigma=6):
+        threshold_ratio=0.85,
+        blur_sigma=3.5,
+        gamma=1.2,
+        alpha=0.7):
 
-    import cv2
-    import numpy as np
     import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib.colors import LinearSegmentedColormap
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
 
@@ -121,29 +71,88 @@ def save_single_heatmap_overlay(
     img = np.clip(img, 0, 1)
     h, w = img.shape[:2]
 
-    heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
-    heatmap = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_CUBIC)
+    # 1. Robust normalize (percentile clip) — ham min-max yerine
+    heatmap_proc = _robust_normalize(heatmap)
+    heatmap_resized = cv2.resize(heatmap_proc, (w, h), interpolation=cv2.INTER_CUBIC)
 
-    mask = (heatmap > threshold_ratio).astype(np.float32)
-    kernel = np.ones((dilation_size, dilation_size), np.uint8)
-    expanded_mask = cv2.dilate(mask, kernel, iterations=1)
-    expanded_mask = cv2.GaussianBlur(expanded_mask, (0, 0), blur_sigma)
-    expanded_mask = np.clip(expanded_mask, 0, 1)
+    # 2. Gaussian blur — yumuşak geçiş
+    if blur_sigma > 0:
+        heatmap_resized = cv2.GaussianBlur(heatmap_resized, (0, 0),
+                                            sigmaX=blur_sigma, sigmaY=blur_sigma)
 
-    red_layer = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-    white_bg = np.ones((h, w, 3), dtype=np.float32)
-    
-    heatmap_layer = white_bg * (1 - expanded_mask[..., None]) + red_layer * expanded_mask[..., None]
+    # 3. Threshold + gamma correction
+    thresh = np.percentile(heatmap_resized, threshold_ratio * 100)
+    heatmap_clipped = np.where(heatmap_resized > thresh, heatmap_resized, thresh)
+    heatmap_norm = _robust_normalize(heatmap_clipped)
+    heatmap_norm = np.power(heatmap_norm, gamma)
 
-    final_overlay = heatmap_layer * img
-    
-    final_overlay = np.clip(final_overlay, 0, 1)
+    colors = [(1, 1, 1), (1, 0, 0)]
+    custom_cmap = LinearSegmentedColormap.from_list("white_red", colors)
+
+    # 4. Soft alpha blending (beyazla karıştır, direkt çarpma yerine)
+    heatmap_rgb = custom_cmap(heatmap_norm)[..., :3]
+    heatmap_soft = (heatmap_rgb * alpha) + (1 - alpha)
+    final_combined = np.clip(heatmap_soft * img, 0, 1)
 
     fig, ax = plt.subplots(figsize=(8, 8))
-    ax.imshow(final_overlay)
+    ax.imshow(final_combined)
+    ax.axis('off')
+
+    sm = ScalarMappable(norm=Normalize(vmin=0, vmax=1), cmap=custom_cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Attention Intensity", rotation=270, labelpad=15)
+
+    plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
+    plt.close(fig)
+
+
+def save_single_heatmap_overlay(
+        heatmap,
+        img_tensor,
+        output_path,
+        hotspot_p=90.0,
+        blur_sigma=3.5,
+        gamma=1.2,
+        alpha=0.7):
+
+    import cv2
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+
+    img = img_tensor.permute(1, 2, 0).detach().cpu().numpy()
+    img = np.clip(img, 0, 1)
+    h, w = img.shape[:2]
+
+    # 1. Robust normalize
+    heatmap_norm = _robust_normalize(heatmap)
+    heatmap_resized = cv2.resize(heatmap_norm, (w, h), interpolation=cv2.INTER_CUBIC)
+
+    # 2. Blur
+    if blur_sigma > 0:
+        heatmap_resized = cv2.GaussianBlur(heatmap_resized, (0, 0),
+                                            sigmaX=blur_sigma, sigmaY=blur_sigma)
+
+    # 3. Percentile threshold + gamma (dilation/binary mask kaldırıldı)
+    thresh = np.percentile(heatmap_resized, hotspot_p)
+    heatmap_clipped = np.where(heatmap_resized > thresh, heatmap_resized, thresh)
+    heatmap_final = _robust_normalize(heatmap_clipped)
+    heatmap_final = np.power(heatmap_final, gamma)
+
+    custom_cmap = LinearSegmentedColormap.from_list("white_red", [(1, 1, 1), (1, 0, 0)])
+
+    # 4. Soft blending
+    heatmap_rgb = custom_cmap(heatmap_final)[..., :3]
+    heatmap_soft = (heatmap_rgb * alpha) + (1 - alpha)
+    final_combined = np.clip(heatmap_soft * img, 0, 1)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.imshow(final_combined)
     ax.axis("off")
 
-    sm = ScalarMappable(norm=Normalize(vmin=0, vmax=1), cmap="Reds")
+    sm = ScalarMappable(norm=Normalize(vmin=0, vmax=1), cmap=custom_cmap)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label("Saliency Intensity", rotation=270, labelpad=15)
@@ -151,10 +160,6 @@ def save_single_heatmap_overlay(
     plt.savefig(output_path, bbox_inches="tight", pad_inches=0)
     plt.close(fig)
 
-import torch.nn.functional as F
-import os, torch, cv2
-import numpy as np
-import matplotlib.pyplot as plt
 def calculate_attn_map(attentions, 
                        img_tensor,):
 
@@ -223,7 +228,7 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
     has_labels = label_dict is not None
     # Setup Maps
     generate_maps = map_mode in ["all", "avg"]
-    maps_output_dir = os.path.join(target_prediction_dataset_path, target_id, "attention_maps")
+    maps_output_dir = os.path.join(target_prediction_dataset_path, target_id, f"{map_type}_maps")
     if generate_maps and not os.path.exists(maps_output_dir):
         os.makedirs(maps_output_dir)
 
@@ -423,7 +428,7 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
         is_active = 1 if active_votes >= (total_rotations / 2) else 0
         mean_active_prob = sum(rotations_probs) / total_rotations
         
-        confidence = mean_active_prob if is_active == 1 else (1.0 - mean_active_prob)
+        confidence = mean_active_prob
         
         # Store for JSON
         entry = {

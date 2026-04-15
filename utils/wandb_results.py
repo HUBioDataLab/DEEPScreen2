@@ -33,16 +33,20 @@ def get_best_wandb_runs(entity: str, project: str, group_name: Optional[str] = N
     for run in runs:
         history = run.history(samples=100000)
 
+        # Drop rows where the validation metric is missing
         clean_history = history.dropna(subset=[val_metric])
         if clean_history.empty:
             continue
 
+        # Find the row with the best validation metric
         best_row = clean_history.loc[clean_history[val_metric].idxmax()]
         best_step = best_row["_step"]
 
+        # Drop rows where the test metric is missing
         test_history = history.dropna(subset=[test_metric])
         
         if not test_history.empty:
+            # Find the test step closest to the best validation step
             closest_idx = (test_history["_step"] - best_step).abs().idxmin()
             test_value = test_history.loc[closest_idx, test_metric]
             test_step = test_history.loc[closest_idx, "_step"]
@@ -92,11 +96,36 @@ def main():
         print("--- Best Results ---")
         print(df.to_string())
         
-        # You can optionally save the results to a CSV file dynamically:
-        # csv_suffix = args.group if args.group else "all"
-        # csv_filename = f"wandb_results_{csv_suffix}.csv"
-        # df.to_csv(csv_filename, index=False)
-        # print(f"\nResults have been saved to {csv_filename}.")
+        # ---------------------------------------------------------
+        # NEWLY ADDED SECTION: Statistical Calculations (Mean & Std)
+        # ---------------------------------------------------------
+        val_col_name = f"best_val_{args.val_metric}"
+        test_col_name = f"test_{args.test_metric}"
+        
+        # Convert string values like 'N/A' to NaN and cast columns to numeric format
+        df[val_col_name] = pd.to_numeric(df[val_col_name], errors='coerce')
+        df[test_col_name] = pd.to_numeric(df[test_col_name], errors='coerce')
+        
+        # Extract the base model name (group) by removing the '_seed_X' part from 'run' names
+        df['model_base_name'] = df['run'].apply(lambda x: x.split('_seed_')[0])
+        
+        # Grouping and calculating statistics
+        summary = df.groupby('model_base_name').agg({
+            val_col_name: ['mean', 'std'],
+            test_col_name: ['mean', 'std']
+        }).reset_index()
+        
+        # Making column names more readable
+        summary.columns = [
+            'Model', 
+            'Val Mean', 'Val Std', 
+            'Test Mean', 'Test Std'
+        ]
+        
+        print("\n--- Aggregated Results (Mean and Std) ---")
+        print(summary.to_string(index=False))
+        # ---------------------------------------------------------
+        
     else:
         print("No valid results found matching the specified criteria and metrics.")
 
