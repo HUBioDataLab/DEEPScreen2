@@ -97,7 +97,7 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
         all_labels.extend(list(labels.detach().cpu().numpy()))
         all_predictions.extend(list(preds.detach().cpu().numpy()))
         
-        probs = torch.softmax(y_pred, dim=1)  # ✅ logit → prob
+        probs = torch.softmax(y_pred, dim=1) 
         all_pred_probs.extend(probs.detach().cpu().numpy())
 
     return total_loss, total_count, all_comp_ids, all_labels, all_predictions, all_pred_probs

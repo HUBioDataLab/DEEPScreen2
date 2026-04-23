@@ -846,12 +846,13 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
 
 
-def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_ratios=(0.8, 0.1, 0.1)):
+def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_ratios=(0.8, 0.1, 0.1), seed=42):
     """
     Splits data into train, validation, and test sets. 
     Ensures all rotations (augmented images) of a single molecule stay within the same set
     to prevent data leakage during model training.
     """
+
     # Defensive check: Ensure 360 is divisible by the angle
     if 360 % augmentation_angle != 0:
         raise ValueError(
@@ -864,6 +865,7 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
 
     print("Splitting process started...")
     print(f"Total compounds in pool: {len(df)}")
+    print(f"Random seed: {seed}")
     
     # Identify root molecule IDs for actives (1) and inactives (0)
     act_list = df[df['act_inact_id'] == 1]['molecule_chembl_id'].tolist()
@@ -883,31 +885,25 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
     if scaffold_split:
         print("--- Mode: Scaffold Balanced Split (Grouping by Molecule) ---")
         all_root_ids = act_list + inact_list
-        # Retrieve SMILES for scaffold calculation from root IDs
         smiles_list = [df[df['molecule_chembl_id'] == cid]['canonical_smiles'].values[0] for cid in all_root_ids]
         labels = [1] * len(act_list) + [0] * len(inact_list)
         
         df_root = pd.DataFrame({'molecule_chembl_id': all_root_ids, 'smiles': smiles_list, 'label': labels})
         mols = [Chem.MolFromSmiles(s) for s in df_root['smiles']]
         
-        # Chemprop v2.1+ returns a tuple of lists. 
-        # Indices might be nested depending on the environment, so we flatten if necessary.
-        indices = make_split_indices(mols, split="scaffold_balanced", sizes=split_ratios, seed=42)
+        indices = make_split_indices(mols, split="scaffold_balanced", sizes=split_ratios, seed=seed)
         
-        # Ensure indices are flat 1D lists to prevent 'Buffer wrong number of dimensions' error
         train_idx = indices[0][0] if isinstance(indices[0][0], (list, np.ndarray)) else indices[0]
         val_idx   = indices[1][0] if isinstance(indices[1][0], (list, np.ndarray)) else indices[1]
         test_idx  = indices[2][0] if isinstance(indices[2][0], (list, np.ndarray)) else indices[2]
         
-        # Map indices to dataframes
         tr_df = df_root.iloc[train_idx]
         vl_df = df_root.iloc[val_idx]
         ts_df = df_root.iloc[test_idx]
         
-        # Categorize root IDs by label within each split set
-        tr_act_roots = tr_df[tr_df['label'] == 1]['molecule_chembl_id'].tolist()
-        vl_act_roots = vl_df[vl_df['label'] == 1]['molecule_chembl_id'].tolist()
-        ts_act_roots = ts_df[ts_df['label'] == 1]['molecule_chembl_id'].tolist()
+        tr_act_roots   = tr_df[tr_df['label'] == 1]['molecule_chembl_id'].tolist()
+        vl_act_roots   = vl_df[vl_df['label'] == 1]['molecule_chembl_id'].tolist()
+        ts_act_roots   = ts_df[ts_df['label'] == 1]['molecule_chembl_id'].tolist()
         
         tr_inact_roots = tr_df[tr_df['label'] == 0]['molecule_chembl_id'].tolist()
         vl_inact_roots = vl_df[vl_df['label'] == 0]['molecule_chembl_id'].tolist()
@@ -915,26 +911,24 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
 
     else:
         print("--- Mode: Full Random Split (Grouping by Molecule) ---")
-        # Shuffle root IDs so all rotations move together
-        random.shuffle(act_list)
-        random.shuffle(inact_list)
+
+        rng = random.Random(seed)
+        rng.shuffle(act_list)
+        rng.shuffle(inact_list)
         
         def split_roots(lst):
             n = len(lst)
             t = int(n * split_ratios[0])
             v = int(n * split_ratios[1])
-            # Basic proportional slicing
             return lst[:t], lst[t:t+v], lst[t+v:]
 
-        # Perform split at the root molecule level
-        tr_act_roots, vl_act_roots, ts_act_roots = split_roots(act_list)
+        tr_act_roots, vl_act_roots, ts_act_roots     = split_roots(act_list)
         tr_inact_roots, vl_inact_roots, ts_inact_roots = split_roots(inact_list)
 
     # FINAL STEP: Apply data augmentation to root IDs after the split is finalized.
-    # All rotations of a single molecule are guaranteed to exist in ONLY one set.
-    tr_act = expand_with_angles(tr_act_roots)
-    vl_act = expand_with_angles(vl_act_roots)
-    ts_act = expand_with_angles(ts_act_roots)
+    tr_act   = expand_with_angles(tr_act_roots)
+    vl_act   = expand_with_angles(vl_act_roots)
+    ts_act   = expand_with_angles(ts_act_roots)
     
     tr_inact = expand_with_angles(tr_inact_roots)
     vl_inact = expand_with_angles(vl_inact_roots)

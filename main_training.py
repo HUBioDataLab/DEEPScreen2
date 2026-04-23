@@ -307,7 +307,7 @@ def main():
         with open(os.path.join(config_folder,"config.yaml")) as f:
             config = yaml.safe_load(f)
             
-    for i in range(repeat):   
+    for seed in range(repeat):   
         # Create platform-independent path
         target_training_dataset_path = Path(args.training_dir).resolve()
         target_training_dataset_path.mkdir(parents=True, exist_ok=True)
@@ -330,7 +330,7 @@ def main():
             args.negative_enrichment,
             args.augment,
             args.email,
-            i)
+            seed)
 
         if args.sweep:
 
@@ -343,7 +343,7 @@ def main():
         else:
             exp_name = args.en
             if args.dataset == "tdc" and args.benchmark:
-                exp_name = f"{exp_name}_seed_{i}"
+                exp_name = f"{exp_name}_seed_{seed}"
 
             train_validation_test_training(
             args.target_id,

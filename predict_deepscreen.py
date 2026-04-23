@@ -1,3 +1,4 @@
+from concurrent.futures import ProcessPoolExecutor
 import os
 import torch
 import numpy as np
@@ -43,6 +44,7 @@ def process_smiles_for_prediction(data):
         print(f"Error processing {compound_id}: {e}")
         return None
     return compound_id
+
 def _robust_normalize(data, p_low=1, p_high=99):
     vmin = np.percentile(data, p_low)
     vmax = np.percentile(data, p_high)
@@ -105,7 +107,6 @@ def save_single_heatmap_overlay_attention(
 
     plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
     plt.close(fig)
-
 
 def save_single_heatmap_overlay(
         heatmap,
@@ -211,7 +212,8 @@ def calculate_attn_map(attentions,
     stitched_map = stitched_map.view(B, grid_size * window_size, grid_size * window_size)
     return stitched_map
 
-def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, dropout, hidden_size, window_size, attention_probs_dropout_prob, drop_path_rate, layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio, cuda_selection, map_mode,map_type = "saliency"):
+import pandas as pd
+def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, dropout, hidden_size, window_size, attention_probs_dropout_prob, drop_path_rate, layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio, cuda_selection, map_mode,map_type = "saliency",smiles_file=None):
     
     current_path_beginning = os.getcwd().split("DEEPScreen")[0]
     current_path_version = os.getcwd().split("DEEPScreen")[1].split("/")[0]
@@ -219,13 +221,34 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
     target_prediction_dataset_path = f"{project_file_path}/prediction_files"
     
     initialize_dirs(target_id, target_prediction_dataset_path)
-    
-    # Generate Images (if needed) - Assuming process_smiles_for_prediction is called externally or images exist
-    # (Skipping generation code here for brevity, assuming images are present)
+
+    if smiles_file is not None:
+        df = pd.read_csv(smiles_file)
+        smiles_list = df["canonical_smiles"].tolist()
+        compound_ids = df["molecule_chembl_id"].tolist()
+
+        print("Generating molecule images (skipping existing)...")
+        smiles_data = [
+            (smiles, comp_id, target_prediction_dataset_path, target_id)
+            for smiles, comp_id in zip(smiles_list, compound_ids)
+        ]
+
+        with ProcessPoolExecutor() as executor:
+            processed_compounds = list(tqdm(
+                executor.map(process_smiles_for_prediction, smiles_data),
+                total=len(smiles_data),
+                desc="Generating images"
+            ))
+        processed_compounds = [c for c in processed_compounds if c is not None]
+        print(f"{len(processed_compounds)} compound image(s) ready.")
+    else:
+        print("No SMILES file provided, assuming images already exist.")
 
     # --- LOAD LABELS ---
     label_dict = load_deepscreen_labels(target_id, target_prediction_dataset_path,split)
     has_labels = label_dict is not None
+    if not has_labels:
+        print("No train_val_test.json is provided, so the split selection won't be used.")
     # Setup Maps
     generate_maps = map_mode in ["all", "avg"]
     maps_output_dir = os.path.join(target_prediction_dataset_path, target_id, f"{map_type}_maps")
@@ -521,6 +544,11 @@ if __name__ == "__main__":
         choices=["saliency", "attention"],
         help="saliency (grad-based) or attention (ViT rollout)"
     )
+    parser.add_argument(
+        '--smiles_file',
+        type=str,
+        help="smilesfile.csv for the smiles representations of the molecules, along with their indexes to generate images for as in \"hERG1.png\""
+    )
     args = parser.parse_args()
 
     def dict_to_namespace(d):
@@ -555,5 +583,6 @@ if __name__ == "__main__":
         params.mlp_ratio,           
         args.cuda,
         args.map_mode,
-        args.map_type
+        args.map_type,
+        args.smiles_file
         )
