@@ -89,6 +89,10 @@ You can select the model architecture globally using the `--model` flag.
     ```bash
     --model ViT
     ```
+*   **YOLO V11**: YOLOv11 Classification Model. 
+    ```bash
+    --model YOLOv11
+    ```
 
 ### 3. Optimizer Selection
 
@@ -132,8 +136,10 @@ Once a model is trained, use `predict_deepscreen.py` to screen new molecules.
 python predict_deepscreen.py \
     --model_path trained_models/your_experiment_name/best_model.pth \
     --smiles_file prediction_files/your_compounds.csv \
-    --target_id my_prediction_run
+    --target_id my_prediction_set \
+    --split test
 ```
+*   `--split`: If your folder contains train_val_test.json created by the training code, you can use it to specify the molecules if you want to predict on a subset.
 *   `--smiles_file`: A CSV containing SMILES strings to predict.
 *   `--model_path`: Path to the `.pth` checkpoint file.
 
@@ -164,10 +170,6 @@ DEEPScreen2/
 ├── data_processing.py      # Data loading and image generation
 └── requirements.txt        # Python dependencies
 ```
-
-## Coming Soon / In Progress
-
-*   **YOLO Support**: We are working on integrating YOLO-based object detection architectures for more interpretable feature localization on molecular images. Stay tuned!
 
 # ⚠️ Deterministic CUDA Warning
 
