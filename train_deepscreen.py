@@ -178,7 +178,7 @@ def train_validation_test_training(
     # Create a unique identifier string based on key hyperparameters
     # We select specific keys to be part of the filename/ID
     key_params = [
-        target_id, model_name, cfg['fc1'], cfg['fc2'], 
+        target_id, model_name,
         cfg['learning_rate'], cfg['bs'], cfg['dropout'], cfg['epoch'], 
         experiment_name
     ]
