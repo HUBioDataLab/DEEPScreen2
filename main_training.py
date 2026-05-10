@@ -8,6 +8,17 @@ import wandb
 import yaml
 import os
 import time
+import random
+import numpy as np
+import torch
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 parser = argparse.ArgumentParser(description='DEEPScreen arguments')
 # ============================
@@ -253,13 +264,14 @@ parser.add_argument(
     help='E-mail for accessing NCBI BLAST web service')
 
 args = None
-
+run_seed = 123
 def sweep():
     global args
 
     wandb.init(entity = args.entity_name,project=args.project_name, id=args.run_id, resume='allow')
 
     config = wandb.config
+    set_seed(run_seed)
     hp_string = "_".join(f"{k}={v}" for k, v in dict(config).items())
     exp_name = f"{args.en}_sweep_{wandb.run.id}_{hp_string}"
 
@@ -280,6 +292,7 @@ def sweep():
         args.patience,
         args.warmup,
         args.selection_metric,
+        run_seed,# seed related to torch etc. not dataset splitting, that is defined at i within for i in range
         args.sweep,
         scheduler = args.with_scheduler,
         use_muon = args.muon,
@@ -289,7 +302,7 @@ def sweep():
 
 def main():
     global args
-
+    set_seed(run_seed)
     repeat = 1
     if args.benchmark: 
         repeat = 5
@@ -337,7 +350,7 @@ def main():
             sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
 
             # Start sweep job.
-            wandb.agent(sweep_id, function=sweep)
+            wandb.agent(sweep_id,function=sweep)
             
         
         else:
@@ -359,6 +372,7 @@ def main():
             args.patience,
             args.warmup,
             args.selection_metric,
+            run_seed,# seed related to torch etc. not dataset splitting, that is defined at i within for i in range
             args.sweep,
             scheduler=args.with_scheduler,
             use_muon = args.muon,

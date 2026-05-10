@@ -37,9 +37,6 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-g = torch.Generator()
-g.manual_seed(0)
-
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split(os.sep)[0]
 
@@ -543,6 +540,10 @@ def negative_enrichment_pipeline(chembl_target_id,
 
     return list(combined_inactives), chemblid_smiles_dict
 
+def make_generator(seed):
+    g = torch.Generator()
+    g.manual_seed(seed)
+    return g
 
 def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,run_seed):
     """
@@ -986,18 +987,18 @@ class DEEPScreenDataset(Dataset):
 
         return img_arr, label, comp_id
 
-def get_train_test_val_data_loaders(target_id, batch_size=32):
+def get_train_test_val_data_loaders(target_id, seed,batch_size=32):
     training_dataset = DEEPScreenDataset(target_id, "training")
     validation_dataset = DEEPScreenDataset(target_id, "validation")
     test_dataset = DEEPScreenDataset(target_id, "test")
-
-    train_sampler = SubsetRandomSampler(range(len(training_dataset)))
+    g = make_generator(seed)
+    train_sampler = SubsetRandomSampler(range(len(training_dataset)),generator = g)
     train_loader = DataLoader(training_dataset, batch_size=batch_size, sampler=train_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
     
-    validation_sampler = SubsetRandomSampler(range(len(validation_dataset)))
+    validation_sampler = SubsetRandomSampler(range(len(validation_dataset)),generator = g)
     validation_loader = DataLoader(validation_dataset, batch_size=batch_size, sampler=validation_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
 
-    test_sampler = SubsetRandomSampler(range(len(test_dataset)))
+    test_sampler = SubsetRandomSampler(range(len(test_dataset)),generator = g)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
 
     return train_loader, validation_loader, test_loader

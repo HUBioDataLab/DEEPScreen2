@@ -27,11 +27,9 @@ from tqdm import tqdm
 from muon import SingleDeviceMuonWithAuxAdam
 
 warnings.filterwarnings(action='ignore')
-torch.manual_seed(123)
-np.random.seed(123)
+
 use_gpu = torch.cuda.is_available()
-torch.backends.cudnn.benchmark = False
-torch.use_deterministic_algorithms(True)
+
 
 sep = os.sep
 
@@ -147,6 +145,7 @@ def train_validation_test_training(
     patience, 
     warmup,
     selection_metric,
+    run_seed,
 
     sweep=False, scheduler=False, use_muon=False
 ):
@@ -223,7 +222,7 @@ def train_validation_test_training(
     best_val_test_prediction_fl = open(pred_file_path, "w")
 
     # Data Loaders
-    train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(target_id, cfg['bs'])
+    train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(target_id,run_seed, cfg['bs'])
 
     # ---- 5. DYNAMIC MODEL LOADING ----
     # This is the "Bugless" part. We map model names to classes and specific args.
