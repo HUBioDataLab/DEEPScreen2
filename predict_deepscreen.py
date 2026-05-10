@@ -73,11 +73,11 @@ def save_single_heatmap_overlay_attention(
     img = np.clip(img, 0, 1)
     h, w = img.shape[:2]
 
-    # 1. Robust normalize (percentile clip) — ham min-max yerine
+    # 1. Robust normalize
     heatmap_proc = _robust_normalize(heatmap)
     heatmap_resized = cv2.resize(heatmap_proc, (w, h), interpolation=cv2.INTER_CUBIC)
 
-    # 2. Gaussian blur — yumuşak geçiş
+    # 2. Gaussian blur
     if blur_sigma > 0:
         heatmap_resized = cv2.GaussianBlur(heatmap_resized, (0, 0),
                                             sigmaX=blur_sigma, sigmaY=blur_sigma)
@@ -91,10 +91,15 @@ def save_single_heatmap_overlay_attention(
     colors = [(1, 1, 1), (1, 0, 0)]
     custom_cmap = LinearSegmentedColormap.from_list("white_red", colors)
 
-    # 4. Soft alpha blending (beyazla karıştır, direkt çarpma yerine)
+    # 4. Blend red only onto white background pixels, leave molecule untouched
+    whiteness = np.min(img, axis=2)          # 1.0 = pure white bg, 0.0 = dark molecule
     heatmap_rgb = custom_cmap(heatmap_norm)[..., :3]
-    heatmap_soft = (heatmap_rgb * alpha) + (1 - alpha)
-    final_combined = np.clip(heatmap_soft * img, 0, 1)
+
+    overlay_strength = heatmap_norm * whiteness * alpha  # (H, W)
+    overlay_strength = overlay_strength[..., np.newaxis]  # (H, W, 1)
+
+    final_combined = img * (1.0 - overlay_strength) + heatmap_rgb * overlay_strength
+    final_combined = np.clip(final_combined, 0, 1)
 
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.imshow(final_combined)
@@ -127,16 +132,13 @@ def save_single_heatmap_overlay(
     img = np.clip(img, 0, 1)
     h, w = img.shape[:2]
 
-    # 1. Robust normalize
     heatmap_norm = _robust_normalize(heatmap)
     heatmap_resized = cv2.resize(heatmap_norm, (w, h), interpolation=cv2.INTER_CUBIC)
 
-    # 2. Blur
     if blur_sigma > 0:
         heatmap_resized = cv2.GaussianBlur(heatmap_resized, (0, 0),
                                             sigmaX=blur_sigma, sigmaY=blur_sigma)
 
-    # 3. Percentile threshold + gamma (dilation/binary mask kaldırıldı)
     thresh = np.percentile(heatmap_resized, hotspot_p)
     heatmap_clipped = np.where(heatmap_resized > thresh, heatmap_resized, thresh)
     heatmap_final = _robust_normalize(heatmap_clipped)
@@ -144,10 +146,20 @@ def save_single_heatmap_overlay(
 
     custom_cmap = LinearSegmentedColormap.from_list("white_red", [(1, 1, 1), (1, 0, 0)])
 
-    # 4. Soft blending
-    heatmap_rgb = custom_cmap(heatmap_final)[..., :3]
-    heatmap_soft = (heatmap_rgb * alpha) + (1 - alpha)
-    final_combined = np.clip(heatmap_soft * img, 0, 1)
+    # --- FIXED BLENDING ---
+    # Compute a "whiteness" mask: 1.0 where pixel is fully white, 0.0 where molecule is dark
+    whiteness = np.min(img, axis=2)  # per-pixel minimum across RGB channels
+
+    heatmap_rgb = custom_cmap(heatmap_final)[..., :3]  # (H, W, 3), white->red
+
+    # Blend red overlay only onto white/background pixels
+    # Where whiteness=1 (background): lerp from white toward red based on heatmap intensity
+    # Where whiteness=0 (molecule atom/bond): keep original img pixel untouched
+    overlay_strength = heatmap_final * whiteness * alpha  # shape (H, W)
+    overlay_strength = overlay_strength[..., np.newaxis]  # (H, W, 1) for broadcasting
+
+    final_combined = img * (1.0 - overlay_strength) + heatmap_rgb * overlay_strength
+    final_combined = np.clip(final_combined, 0, 1)
 
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.imshow(final_combined)

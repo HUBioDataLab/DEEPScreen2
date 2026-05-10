@@ -986,13 +986,13 @@ def get_train_test_val_data_loaders(target_id, batch_size=32):
     test_dataset = DEEPScreenDataset(target_id, "test")
 
     train_sampler = SubsetRandomSampler(range(len(training_dataset)))
-    train_loader = DataLoader(training_dataset, batch_size=batch_size, sampler=train_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
+    train_loader = DataLoader(training_dataset, batch_size=batch_size, sampler=train_sampler,generator=g,worker_init_fn=seed_worker,num_workers=4)
     
     validation_sampler = SubsetRandomSampler(range(len(validation_dataset)))
-    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, sampler=validation_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
+    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, sampler=validation_sampler,generator=g,worker_init_fn=seed_worker,num_workers=4)
 
     test_sampler = SubsetRandomSampler(range(len(test_dataset)))
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler,generator=g,worker_init_fn=seed_worker,num_workers=4)
 
     return train_loader, validation_loader, test_loader
 
