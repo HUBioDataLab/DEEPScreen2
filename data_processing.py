@@ -771,7 +771,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                 training_inact_comp_id_list,
                 val_inact_comp_id_list,
                 test_inact_comp_id_list
-            ) = train_val_test_split(smiles_file, scaffold, augmentation_angle)
+            ) = train_val_test_split(smiles_file, scaffold, augmentation_angle,seed = run_seed)
 
         
             print("Train act len : ",len(training_act_comp_id_list))
