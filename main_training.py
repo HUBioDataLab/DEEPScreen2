@@ -65,7 +65,7 @@ parser.add_argument(
     type=str,
     default="CNNModel1",
     metavar='MN',
-    help='Model name (default: CNNModel1)')
+    help='Model name (default: CNNModel1, choices: CNNModel1, CNNModel2, ViT, YOLOv11)')
 
 parser.add_argument(
     '--model_save', 
