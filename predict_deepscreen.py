@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
-from models import CNNModel1, ViT
+from models import CNNModel1, CNNModel2, ViT
 from data_processing import save_comp_imgs_from_smiles, initialize_dirs
 import cv2
 import json
@@ -273,6 +273,8 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
     # Load Model
     if model_name == "CNNModel1":
         model = CNNModel1(fc1, fc2, dropout).to(device)
+    elif model_name == "CNNModel2":
+        model = CNNModel2(fc1, fc2, dropout).to(device)
     elif model_name == "ViT":
         model = ViT(window_size, hidden_size, attention_probs_dropout_prob, drop_path_rate, dropout, layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio, 2).to(device)
 

@@ -9,7 +9,7 @@ import numpy as np
 import torch.nn as nn
 from torch.optim.lr_scheduler import LinearLR
 
-from models import CNNModel1, ViT,YOLOv11Classifier
+from models import CNNModel1, CNNModel2, ViT, YOLOv11Classifier
 
 from data_processing import get_train_test_val_data_loaders
 from evaluation_metrics import prec_rec_f1_acc_mcc, get_list_of_scores
@@ -230,11 +230,18 @@ def train_validation_test_training(
     
     if model_name == "CNNModel1":
         model = CNNModel1(
-            cfg['fc1'], 
-            cfg['fc2'], 
+            cfg['fc1'],
+            cfg['fc2'],
             cfg['dropout']
         ).to(device)
-        
+
+    elif model_name == "CNNModel2":
+        model = CNNModel2(
+            cfg['fc1'],
+            cfg['fc2'],
+            cfg['dropout']
+        ).to(device)
+
     elif model_name == "ViT":
         # For complex models, you can pass parameters explicitly or using **cfg
         # if the model arguments match your dictionary keys exactly.
