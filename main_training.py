@@ -320,7 +320,7 @@ def main():
         with open(os.path.join(config_folder,"config.yaml")) as f:
             config = yaml.safe_load(f)
             
-    for seed in range(repeat):   
+    for seed in range(repeat):
         # Create platform-independent path
         target_training_dataset_path = Path(args.training_dir).resolve()
         target_training_dataset_path.mkdir(parents=True, exist_ok=True)

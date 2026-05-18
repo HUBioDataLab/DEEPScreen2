@@ -545,7 +545,7 @@ def make_generator(seed):
     g.manual_seed(seed)
     return g
 
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,run_seed):
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,seed):
     """
     split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
     """
@@ -566,7 +566,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
             name = benchmark['name']
             train_val, test = benchmark['train_val'], benchmark['test']
-            train, valid = group.get_train_valid_split(benchmark = name, split_type = 'default', seed = run_seed)
+            train, valid = group.get_train_valid_split(benchmark = name, split_type = 'default', seed = seed)
             split["train"] = train 
             split["valid"] = valid
             split["test"] = test
@@ -771,7 +771,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                 training_inact_comp_id_list,
                 val_inact_comp_id_list,
                 test_inact_comp_id_list
-            ) = train_val_test_split(smiles_file, scaffold, augmentation_angle,seed = run_seed)
+            ) = train_val_test_split(smiles_file, scaffold, augmentation_angle,seed = seed)
 
         
             print("Train act len : ",len(training_act_comp_id_list))
