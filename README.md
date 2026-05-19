@@ -89,6 +89,10 @@ You can select the model architecture globally using the `--model` flag.
     ```bash
     --model ViT
     ```
+*   **YOLO V11**: YOLOv11 Classification Model. 
+    ```bash
+    --model YOLOv11
+    ```
 
 ### 3. Optimizer Selection
 
@@ -112,7 +116,19 @@ DEEPScreen2 supports automated hyperparameter tuning using Weights & Biases (Wan
     ```
     This will initialize a WandB sweep agent and start running experiments based on the configuration.
 
-### 5. Prediction / Inference
+### 5. Fetching Results from WandB
+
+After running sweeps or multiple training jobs, you can easily fetch and summarize your best experiments using the provided utility script. This script automatically finds the best validation metric (e.g., ROC AUC) and its corresponding test metric for a given project or group.
+
+```bash
+python utils/wandb_results.py \
+    --entity "your_wandb_entity" \
+    --project "your_project_name" \
+    --group "your_sweep_or_experiment_group"
+    --val_metric "name_of_your_validation_metric"
+```
+
+### 6. Prediction / Inference
 
 Once a model is trained, use `predict_deepscreen.py` to screen new molecules.
 
@@ -120,8 +136,10 @@ Once a model is trained, use `predict_deepscreen.py` to screen new molecules.
 python predict_deepscreen.py \
     --model_path trained_models/your_experiment_name/best_model.pth \
     --smiles_file prediction_files/your_compounds.csv \
-    --target_id my_prediction_run
+    --target_id my_prediction_set \
+    --split test
 ```
+*   `--split`: If your folder contains train_val_test.json created by the training code, you can use it to specify the molecules if you want to predict on a subset.
 *   `--smiles_file`: A CSV containing SMILES strings to predict.
 *   `--model_path`: Path to the `.pth` checkpoint file.
 
@@ -143,6 +161,8 @@ DEEPScreen2/
 │   ├── config.yaml         # Default training & runtime 
 │   ├── sweep_cnn.yaml      # WandB sweep configuration for CNN
 |   └── sweep_vit.yaml      # WandB sweep configuration for ViT 
+├── utils/                  # Utility scripts and helper functions
+│   └── wandb_results.py    # CLI tool to fetch best metrics from W&B
 ├── main_training.py        # Main entry point for training
 ├── train_deepscreen.py     # Training logic and loops
 ├── predict_deepscreen.py   # Inference script
@@ -150,10 +170,6 @@ DEEPScreen2/
 ├── data_processing.py      # Data loading and image generation
 └── requirements.txt        # Python dependencies
 ```
-
-## Coming Soon / In Progress
-
-*   **YOLO Support**: We are working on integrating YOLO-based object detection architectures for more interpretable feature localization on molecular images. Stay tuned!
 
 # ⚠️ Deterministic CUDA Warning
 

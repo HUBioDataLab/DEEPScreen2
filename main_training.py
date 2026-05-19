@@ -8,6 +8,17 @@ import wandb
 import yaml
 import os
 import time
+import random
+import numpy as np
+import torch
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 parser = argparse.ArgumentParser(description='DEEPScreen arguments')
 # ============================
@@ -54,7 +65,7 @@ parser.add_argument(
     type=str,
     default="CNNModel1",
     metavar='MN',
-    help='Model name (default: CNNModel1)')
+    help='Model name (default: CNNModel1, choices: CNNModel1, CNNModel2, ViT, YOLOv11)')
 
 parser.add_argument(
     '--model_save', 
@@ -260,13 +271,14 @@ parser.add_argument(
     help='E-mail for accessing NCBI BLAST web service')
 
 args = None
-
+run_seed = 123
 def sweep():
     global args
 
     wandb.init(entity = args.entity_name,project=args.project_name, id=args.run_id, resume='allow')
 
     config = wandb.config
+    set_seed(run_seed)
     hp_string = "_".join(f"{k}={v}" for k, v in dict(config).items())
     exp_name = f"{args.en}_sweep_{wandb.run.id}_{hp_string}"
 
@@ -288,6 +300,7 @@ def sweep():
         args.warmup,
         args.selection_metric,
         args.task_type,
+        run_seed,# seed related to torch etc. not dataset splitting, that is defined at i within for i in range
         args.sweep,
         scheduler = args.with_scheduler,
         use_muon = args.muon,
@@ -297,12 +310,25 @@ def sweep():
 
 def main():
     global args
-
+    set_seed(run_seed)
     repeat = 1
     if args.benchmark: 
         repeat = 5
+    config_folder = args.config_folder
 
-    for i in range(repeat):   
+    if args.sweep:
+        if "CNN" in args.model:
+            yaml_file = "sweep_cnn.yaml"
+        else:
+            yaml_file = "sweep_vit.yaml"
+
+        with open(os.path.join(config_folder,yaml_file)) as f:
+            sweep_config = yaml.safe_load(f)
+    else:
+        with open(os.path.join(config_folder,"config.yaml")) as f:
+            config = yaml.safe_load(f)
+            
+    for seed in range(repeat):
         # Create platform-independent path
         target_training_dataset_path = Path(args.training_dir).resolve()
         target_training_dataset_path.mkdir(parents=True, exist_ok=True)
@@ -325,31 +351,21 @@ def main():
             args.negative_enrichment,
             args.augment,
             args.email,
-            i)
+            seed)
 
-        config_folder = args.config_folder
         if args.sweep:
-            # 1. Determine which YAML file to use
-            if "CNN" in args.model:
-                yaml_file = "sweep_cnn.yaml"
-            else:
-                yaml_file = "sweep_vit.yaml"
-
-            with open(os.path.join(config_folder,yaml_file)) as f:
-                sweep_config = yaml.safe_load(f)
 
             sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
 
             # Start sweep job.
-            wandb.agent(sweep_id, function=sweep)
+            wandb.agent(sweep_id,function=sweep)
             
         
         else:
             exp_name = args.en
             if args.dataset == "tdc" and args.benchmark:
-                exp_name = f"{exp_name}_seed_{i}"
-            with open(os.path.join(config_folder,"config.yaml")) as f:
-                config = yaml.safe_load(f)
+                exp_name = f"{exp_name}_seed_{seed}"
+
             train_validation_test_training(
             args.target_id,
             args.model,
@@ -365,6 +381,7 @@ def main():
             args.warmup,
             args.selection_metric,
             args.task_type,
+            run_seed,# seed related to torch etc. not dataset splitting, that is defined at i within for i in range
             args.sweep,
             scheduler=args.with_scheduler,
             use_muon = args.muon,

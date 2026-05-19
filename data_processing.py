@@ -37,9 +37,6 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-g = torch.Generator()
-g.manual_seed(0)
-
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split(os.sep)[0]
 
@@ -554,8 +551,12 @@ def negative_enrichment_pipeline(chembl_target_id,
 
     return list(combined_inactives), chemblid_smiles_dict
 
+def make_generator(seed):
+    g = torch.Generator()
+    g.manual_seed(seed)
+    return g
 
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,run_seed):
+def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,seed):
     """
     split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
     """
@@ -576,7 +577,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
             name = benchmark['name']
             train_val, test = benchmark['train_val'], benchmark['test']
-            train, valid = group.get_train_valid_split(benchmark = name, split_type = 'default', seed = run_seed)
+            train, valid = group.get_train_valid_split(benchmark = name, split_type = 'default', seed = seed)
             split["train"] = train 
             split["valid"] = valid
             split["test"] = test
@@ -781,7 +782,7 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                 training_inact_comp_id_list,
                 val_inact_comp_id_list,
                 test_inact_comp_id_list
-            ) = train_val_test_split(smiles_file, scaffold, augmentation_angle)
+            ) = train_val_test_split(smiles_file, scaffold, augmentation_angle,seed = seed)
 
         
             print("Train act len : ",len(training_act_comp_id_list))
@@ -857,12 +858,13 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
 
 
-def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_ratios=(0.8, 0.1, 0.1)):
+def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_ratios=(0.8, 0.1, 0.1), seed=42):
     """
     Splits data into train, validation, and test sets. 
     Ensures all rotations (augmented images) of a single molecule stay within the same set
     to prevent data leakage during model training.
     """
+
     # Defensive check: Ensure 360 is divisible by the angle
     if 360 % augmentation_angle != 0:
         raise ValueError(
@@ -875,6 +877,7 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
 
     print("Splitting process started...")
     print(f"Total compounds in pool: {len(df)}")
+    print(f"Random seed: {seed}")
     
     # Identify root molecule IDs for actives (1) and inactives (0)
     act_list = df[df['act_inact_id'] == 1]['molecule_chembl_id'].tolist()
@@ -894,31 +897,25 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
     if scaffold_split:
         print("--- Mode: Scaffold Balanced Split (Grouping by Molecule) ---")
         all_root_ids = act_list + inact_list
-        # Retrieve SMILES for scaffold calculation from root IDs
         smiles_list = [df[df['molecule_chembl_id'] == cid]['canonical_smiles'].values[0] for cid in all_root_ids]
         labels = [1] * len(act_list) + [0] * len(inact_list)
         
         df_root = pd.DataFrame({'molecule_chembl_id': all_root_ids, 'smiles': smiles_list, 'label': labels})
         mols = [Chem.MolFromSmiles(s) for s in df_root['smiles']]
         
-        # Chemprop v2.1+ returns a tuple of lists. 
-        # Indices might be nested depending on the environment, so we flatten if necessary.
-        indices = make_split_indices(mols, split="scaffold_balanced", sizes=split_ratios, seed=42)
+        indices = make_split_indices(mols, split="scaffold_balanced", sizes=split_ratios, seed=seed)
         
-        # Ensure indices are flat 1D lists to prevent 'Buffer wrong number of dimensions' error
         train_idx = indices[0][0] if isinstance(indices[0][0], (list, np.ndarray)) else indices[0]
         val_idx   = indices[1][0] if isinstance(indices[1][0], (list, np.ndarray)) else indices[1]
         test_idx  = indices[2][0] if isinstance(indices[2][0], (list, np.ndarray)) else indices[2]
         
-        # Map indices to dataframes
         tr_df = df_root.iloc[train_idx]
         vl_df = df_root.iloc[val_idx]
         ts_df = df_root.iloc[test_idx]
         
-        # Categorize root IDs by label within each split set
-        tr_act_roots = tr_df[tr_df['label'] == 1]['molecule_chembl_id'].tolist()
-        vl_act_roots = vl_df[vl_df['label'] == 1]['molecule_chembl_id'].tolist()
-        ts_act_roots = ts_df[ts_df['label'] == 1]['molecule_chembl_id'].tolist()
+        tr_act_roots   = tr_df[tr_df['label'] == 1]['molecule_chembl_id'].tolist()
+        vl_act_roots   = vl_df[vl_df['label'] == 1]['molecule_chembl_id'].tolist()
+        ts_act_roots   = ts_df[ts_df['label'] == 1]['molecule_chembl_id'].tolist()
         
         tr_inact_roots = tr_df[tr_df['label'] == 0]['molecule_chembl_id'].tolist()
         vl_inact_roots = vl_df[vl_df['label'] == 0]['molecule_chembl_id'].tolist()
@@ -926,26 +923,24 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
 
     else:
         print("--- Mode: Full Random Split (Grouping by Molecule) ---")
-        # Shuffle root IDs so all rotations move together
-        random.shuffle(act_list)
-        random.shuffle(inact_list)
+
+        rng = random.Random(seed)
+        rng.shuffle(act_list)
+        rng.shuffle(inact_list)
         
         def split_roots(lst):
             n = len(lst)
             t = int(n * split_ratios[0])
             v = int(n * split_ratios[1])
-            # Basic proportional slicing
             return lst[:t], lst[t:t+v], lst[t+v:]
 
-        # Perform split at the root molecule level
-        tr_act_roots, vl_act_roots, ts_act_roots = split_roots(act_list)
+        tr_act_roots, vl_act_roots, ts_act_roots     = split_roots(act_list)
         tr_inact_roots, vl_inact_roots, ts_inact_roots = split_roots(inact_list)
 
     # FINAL STEP: Apply data augmentation to root IDs after the split is finalized.
-    # All rotations of a single molecule are guaranteed to exist in ONLY one set.
-    tr_act = expand_with_angles(tr_act_roots)
-    vl_act = expand_with_angles(vl_act_roots)
-    ts_act = expand_with_angles(ts_act_roots)
+    tr_act   = expand_with_angles(tr_act_roots)
+    vl_act   = expand_with_angles(vl_act_roots)
+    ts_act   = expand_with_angles(ts_act_roots)
     
     tr_inact = expand_with_angles(tr_inact_roots)
     vl_inact = expand_with_angles(vl_inact_roots)
@@ -1152,28 +1147,19 @@ class DEEPScreenDataset(Dataset):
 
         return img_arr, label, comp_id
 
-def get_train_test_val_data_loaders(target_id, batch_size=32):
+def get_train_test_val_data_loaders(target_id, seed,batch_size=32):
     training_dataset = DEEPScreenDataset(target_id, "training")
     validation_dataset = DEEPScreenDataset(target_id, "validation")
     test_dataset = DEEPScreenDataset(target_id, "test")
-
-    loader_kwargs = {
-        "batch_size": batch_size,
-        "generator": g,
-        "worker_init_fn": seed_worker,
-        "num_workers": 8,
-        "persistent_workers": True,
-        "prefetch_factor": 2,
-    }
-
-    train_sampler = SubsetRandomSampler(range(len(training_dataset)))
-    train_loader = DataLoader(training_dataset, sampler=train_sampler, **loader_kwargs)
+    g = make_generator(seed)
+    train_sampler = SubsetRandomSampler(range(len(training_dataset)),generator = g)
+    train_loader = DataLoader(training_dataset, batch_size=batch_size, sampler=train_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
     
-    validation_sampler = SubsetRandomSampler(range(len(validation_dataset)))
-    validation_loader = DataLoader(validation_dataset, sampler=validation_sampler, **loader_kwargs)
+    validation_sampler = SubsetRandomSampler(range(len(validation_dataset)),generator = g)
+    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, sampler=validation_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
 
-    test_sampler = SubsetRandomSampler(range(len(test_dataset)))
-    test_loader = DataLoader(test_dataset, sampler=test_sampler, **loader_kwargs)
+    test_sampler = SubsetRandomSampler(range(len(test_dataset)),generator = g)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
 
     return train_loader, validation_loader, test_loader
 
