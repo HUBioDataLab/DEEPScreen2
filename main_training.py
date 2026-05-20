@@ -309,7 +309,9 @@ def main():
     config_folder = args.config_folder
 
     if args.sweep:
-        if "CNN" in args.model:
+        if args.model == "CNNModel2":
+            yaml_file = "sweep_cnn2.yaml"
+        elif "CNN" in args.model:
             yaml_file = "sweep_cnn.yaml"
         else:
             yaml_file = "sweep_vit.yaml"
