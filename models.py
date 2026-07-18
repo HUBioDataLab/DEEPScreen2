@@ -116,7 +116,7 @@ class ViT(nn.Module):
         configuration.encoder_stride = int(encoder_stride)
         configuration.embed_dim = int(embed_dim)
         configuration.depths = depths
-        configuration.mlp_ratio = mlp_ratio
+        configuration.mlp_ratio = float(mlp_ratio)
         
         configuration.num_labels = num_classes
 

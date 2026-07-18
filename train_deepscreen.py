@@ -147,7 +147,7 @@ def train_validation_test_training(
     selection_metric,
     run_seed,
 
-    sweep=False, scheduler=False, use_muon=False
+    sweep=False, scheduler=False, use_muon=False, split_seed=None
 ):
 
     if selection_metric not in ["auroc", "auprc", "mcc"]:
@@ -168,7 +168,9 @@ def train_validation_test_training(
         "cuda_selection": cuda_selection,
         "scheduler": scheduler,
         "use_muon": use_muon,
-        "model_save": model_save
+        "model_save": model_save,
+        "run_seed": run_seed,
+        "split_seed": split_seed,
     }
     
     for i,v in config.items():
@@ -260,7 +262,10 @@ def train_validation_test_training(
         ).to(device)
 
     elif model_name == "YOLOv11":
-        model = YOLOv11Classifier(num_classes=2,model_size="yolo11m").to(device)
+        model = YOLOv11Classifier(
+            num_classes=2,
+            model_size=cfg.get("model_size", "yolo11m")
+        ).to(device)
     else:
         raise ValueError(f"Model '{model_name}' is not recognized.")
     # ---- 6. OPTIMIZER, SCHEDULER, CRITERION ----

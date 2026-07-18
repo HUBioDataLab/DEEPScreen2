@@ -27,16 +27,16 @@ parser = argparse.ArgumentParser(description='DEEPScreen arguments')
 parser.add_argument(
     '--target_id',
     type=str,
-    default="CHEMBL4282",
+    default=None,
     metavar='TID',
-    help='Target ChEMBL ID')
+    help='Target/dataset ID (default: config dataset_name or CHEMBL4282)')
 
 parser.add_argument(
     '--dataset', 
     type=str,
-    default="chembl",
+    default=None,
     metavar='DATASET',
-    help='Dataset format (chembl, moleculenet, tdc) (default: chembl)')
+    help='Dataset format (default: config dataset_format or chembl)')
 
 parser.add_argument(
     '--benchmark',
@@ -93,6 +93,18 @@ parser.add_argument(
     '--scaffold',
     action='store_true',
     help='Enable scaffold-based splitting')
+
+parser.add_argument(
+    '--split_seed',
+    type=int,
+    default=0,
+    help='Random seed for train/validation/test splitting (default: 0)')
+
+parser.add_argument(
+    '--run_seed',
+    type=int,
+    default=123,
+    help='Random seed for model initialization and training (default: 123)')
 
 parser.add_argument(
     '--augment', 
@@ -264,14 +276,41 @@ parser.add_argument(
     help='E-mail for accessing NCBI BLAST web service')
 
 args = None
-run_seed = 123
-def sweep():
+DEFAULT_TARGET_ID = "CHEMBL4282"
+DEFAULT_DATASET_FORMAT = "chembl"
+
+
+def resolve_dataset_settings(config_parameters, parsed_args):
+    dataset_name = config_parameters.get("dataset_name")
+    if parsed_args.target_id is None:
+        parsed_args.target_id = dataset_name or DEFAULT_TARGET_ID
+    elif dataset_name is not None and dataset_name != parsed_args.target_id:
+        raise ValueError(
+            f"Config dataset_name '{dataset_name}' does not match "
+            f"--target_id '{parsed_args.target_id}'."
+        )
+
+    dataset_format = config_parameters.get("dataset_format")
+    if parsed_args.dataset is None:
+        parsed_args.dataset = dataset_format or DEFAULT_DATASET_FORMAT
+    elif dataset_format is not None and dataset_format != parsed_args.dataset:
+        raise ValueError(
+            f"Config dataset_format '{dataset_format}' does not match "
+            f"--dataset '{parsed_args.dataset}'."
+        )
+
+    return parsed_args
+
+
+def sweep(split_seed=None):
     global args
+    if split_seed is None:
+        split_seed = args.split_seed
 
     wandb.init(entity = args.entity_name,project=args.project_name, id=args.run_id, resume='allow')
 
     config = wandb.config
-    set_seed(run_seed)
+    set_seed(args.run_seed)
     hp_string = "_".join(f"{k}={v}" for k, v in dict(config).items())
     exp_name = f"{args.en}_sweep_{wandb.run.id}_{hp_string}"
 
@@ -292,17 +331,18 @@ def sweep():
         args.patience,
         args.warmup,
         args.selection_metric,
-        run_seed,# seed related to torch etc. not dataset splitting, that is defined at i within for i in range
+        args.run_seed,
         args.sweep,
         scheduler = args.with_scheduler,
         use_muon = args.muon,
+        split_seed=split_seed,
         )
 
 
 
 def main():
     global args
-    set_seed(run_seed)
+    set_seed(args.run_seed)
     repeat = 1
     if args.benchmark: 
         repeat = 5
@@ -318,11 +358,15 @@ def main():
 
         with open(os.path.join(config_folder,yaml_file)) as f:
             sweep_config = yaml.safe_load(f)
+        resolve_dataset_settings(sweep_config.get("parameters", {}), args)
     else:
         with open(os.path.join(config_folder,"config.yaml")) as f:
             config = yaml.safe_load(f)
+        resolve_dataset_settings(config["parameters"], args)
             
-    for seed in range(repeat):
+    for seed_offset in range(repeat):
+        split_seed = args.split_seed + seed_offset
+        print(f"Dataset split seed: {split_seed}")
         # Create platform-independent path
         target_training_dataset_path = Path(args.training_dir).resolve()
         target_training_dataset_path.mkdir(parents=True, exist_ok=True)
@@ -345,20 +389,20 @@ def main():
             args.negative_enrichment,
             args.augment,
             args.email,
-            seed)
+            split_seed)
 
         if args.sweep:
 
             sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
 
             # Start sweep job.
-            wandb.agent(sweep_id,function=sweep)
+            wandb.agent(sweep_id, function=lambda: sweep(split_seed))
             
         
         else:
             exp_name = args.en
             if args.dataset == "tdc" and args.benchmark:
-                exp_name = f"{exp_name}_seed_{seed}"
+                exp_name = f"{exp_name}_seed_{split_seed}"
 
             train_validation_test_training(
             args.target_id,
@@ -374,10 +418,11 @@ def main():
             args.patience,
             args.warmup,
             args.selection_metric,
-            run_seed,# seed related to torch etc. not dataset splitting, that is defined at i within for i in range
+            args.run_seed,
             args.sweep,
             scheduler=args.with_scheduler,
             use_muon = args.muon,
+            split_seed=split_seed,
             )
         
 
