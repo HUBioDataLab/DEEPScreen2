@@ -116,7 +116,7 @@ class ViT(nn.Module):
         configuration.encoder_stride = int(encoder_stride)
         configuration.embed_dim = int(embed_dim)
         configuration.depths = depths
-        configuration.mlp_ratio = mlp_ratio
+        configuration.mlp_ratio = float(mlp_ratio)
         
         configuration.num_labels = num_classes
 
@@ -147,7 +147,13 @@ class YOLOv11Classifier(nn.Module):
         elif hasattr(head, "fc"):
             in_features = head.fc.in_features
             head.fc = nn.Linear(in_features, num_classes)
+        else:
+            raise ValueError("Unsupported YOLO classification head")
         self.model = yolo.model
+        # Ultralytics loads checkpoint parameters frozen for inference. This
+        # wrapper is a training model, so explicitly enable end-to-end tuning.
+        self.model.requires_grad_(True)
+
     def forward(self, x):
         out = self.model(x)
         if isinstance(out, (tuple, list)):

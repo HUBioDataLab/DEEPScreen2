@@ -18,12 +18,18 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 import multiprocessing
 import csv
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+from torch.utils.data import Dataset, DataLoader
 from chemprop.data import make_split_indices
 from tdc.single_pred import ADME, Tox
 from tqdm import tqdm
 import glob          
 import torch
+from data_loading import (
+    DEEPScreenDataset,
+    get_train_test_val_data_loaders,
+    normalize_binary_label,
+    normalize_binary_labels,
+)
 #####################################################
 random.seed(42)  # Very important for reproducibility
 #####################################################
@@ -31,11 +37,6 @@ import requests
 from io import StringIO
 from pathlib import Path
 from tdc.benchmark_group import admet_group
-
-def seed_worker(worker_id):
-    worker_seed = torch.initial_seed() % 2**32
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
 
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split(os.sep)[0]
@@ -540,11 +541,6 @@ def negative_enrichment_pipeline(chembl_target_id,
 
     return list(combined_inactives), chemblid_smiles_dict
 
-def make_generator(seed):
-    g = torch.Generator()
-    g.manual_seed(seed)
-    return g
-
 def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,seed):
     """
     split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
@@ -578,6 +574,10 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-2]: "target"}, inplace=True)
             pandas_df = pandas_df[["Drug_ID","canonical_smiles", "target","split"]].copy()
 
+        pandas_df["target"] = normalize_binary_labels(
+            pandas_df["target"].tolist(),
+            context=f"{targetid} target",
+        )
         pandas_df = pandas_df.sort_values(by="canonical_smiles") # This ensures consistent ordering and giving same molecule_chembl_id to molecules across different seeds
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
 
@@ -946,57 +946,6 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
 
 
 
-class DEEPScreenDataset(Dataset):
-    def __init__(self, target_id, train_val_test,parent_path = os.path.join(training_files_path,"target_training_datasets")):
-        self.target_id = target_id
-        self.train_val_test = train_val_test
-        self.dataset_path = os.path.join(parent_path,target_id)
-        self.train_val_test_folds = json.load(open(os.path.join(self.dataset_path, "train_val_test_dict.json")))
-
-        if train_val_test == "all":
-            self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds]
-            self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds]
-        else:
-            self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds[train_val_test]]
-            self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds[train_val_test]]
-    
-    def __len__(self):
-        return len(self.compid_list)
-
-    def __getitem__(self, index):
-        comp_id = self.compid_list[index]
-        
-        img_path = os.path.join(self.dataset_path, "imgs", "{}.png".format(comp_id))     
-            
-        if not os.path.exists(img_path):
-            raise FileNotFoundError(f"Image not found for compound ID: {comp_id}")
-        img_arr = np.array(Image.open(img_path))
-        
-        if img_arr is None:
-            raise FileNotFoundError(f"Image not found or cannot be read: {img_path}")
-
-        img_arr = np.array(img_arr) / 255.0
-        img_arr = img_arr.transpose((2, 0, 1))
-        label = self.label_list[index]
-
-        return img_arr, label, comp_id
-
-def get_train_test_val_data_loaders(target_id, seed,batch_size=32):
-    training_dataset = DEEPScreenDataset(target_id, "training")
-    validation_dataset = DEEPScreenDataset(target_id, "validation")
-    test_dataset = DEEPScreenDataset(target_id, "test")
-    g = make_generator(seed)
-    train_sampler = SubsetRandomSampler(range(len(training_dataset)),generator = g)
-    train_loader = DataLoader(training_dataset, batch_size=batch_size, sampler=train_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
-    
-    validation_sampler = SubsetRandomSampler(range(len(validation_dataset)),generator = g)
-    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, sampler=validation_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
-
-    test_sampler = SubsetRandomSampler(range(len(test_dataset)),generator = g)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
-
-    return train_loader, validation_loader, test_loader
-
 def get_training_target_list(chembl_version):
     target_df = pd.read_csv(os.path.join(training_files_path, "{}_training_target_list.txt".format(chembl_version)), index_col=False, header=None)
     
@@ -1089,24 +1038,47 @@ def load_deepscreen_labels(target_id, parent_path,split):
     
     print(f"Loading labels from {json_path}...")
     try:
-        data = json.load(open(json_path))
+        with open(json_path, encoding="utf-8") as label_file:
+            data = json.load(label_file)
         label_dict = {}
-        
-        # Flatten the dictionary
-        for split_key, sample_list in data.items():
-            if split_key!=split:
-                continue
+        split_aliases = {
+            "train": "training",
+            "valid": "validation",
+            "val": "validation",
+        }
+        requested_split = split_aliases.get(split, split)
+        valid_splits = {"training", "validation", "test", "all"}
+        if requested_split not in valid_splits:
+            raise ValueError(
+                f"Unknown split {split!r}; expected training, validation, "
+                "test, all, train, valid, or val."
+            )
+
+        selected_splits = (
+            ("training", "validation", "test")
+            if requested_split == "all"
+            else (requested_split,)
+        )
+        for split_key in selected_splits:
+            sample_list = data.get(split_key, [])
             for item in sample_list:
                 if len(item) >= 2:
                     comp_id = item[0]
-                    label = int(item[1])
+                    label = normalize_binary_label(
+                        item[1],
+                        context=f"{target_id}/{split_key}/{comp_id}",
+                    )
                     comp_id = re.sub(r'_\d+$', '', comp_id)
+                    if comp_id in label_dict and label_dict[comp_id] != label:
+                        raise ValueError(
+                            f"Conflicting labels for compound {comp_id}: "
+                            f"{label_dict[comp_id]} and {label}"
+                        )
                     label_dict[comp_id] = label
         return label_dict
 
     except Exception as e:
-        print(f"Error parsing label file: {e}")
-        return None
+        raise ValueError(f"Error parsing label file {json_path}: {e}") from e
 
 def get_prediction_loader(target_id, parent_path, label_dict=None, batch_size=32):
     """

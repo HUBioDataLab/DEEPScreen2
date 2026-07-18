@@ -3,6 +3,7 @@ import asyncio
 import pandas as pd
 import argparse
 import os
+from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import time
@@ -13,6 +14,17 @@ from tdc.single_pred import ADME,Tox
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def resolve_training_root(args):
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return Path(
+        getattr(
+            args,
+            "training_dir",
+            os.path.join(base_dir, "training_files", "target_training_datasets"),
+        )
+    ).resolve()
 
 """
 The input file containing ChEMBL IDs should be a plain text (.txt) file.
@@ -68,6 +80,11 @@ class ChEMBLDownloader:
                                    assay_types: List[str], pchembl_threshold_for_download: float) -> pd.DataFrame:
         """Async version of fetch_activities with concurrent pagination"""
         logger.info(f"Starting to fetch activities for {len(target_ids)} targets from ChEMBL...")
+        if pchembl_threshold_for_download:
+            logger.warning(
+                "pchembl_threshold_for_download is deprecated and ignored so that "
+                "inactive examples are not removed before class labeling."
+            )
         
         base_url = "https://www.ebi.ac.uk/chembl/api/data/activity.json"
         params = {
@@ -119,7 +136,7 @@ class ChEMBLDownloader:
             df = pd.DataFrame(activities)
             if 'pchembl_value' in df.columns:
                 df['pchembl_value'] = pd.to_numeric(df['pchembl_value'], errors='coerce')
-                df = df[df['pchembl_value'].notnull() & (df['pchembl_value'] >= pchembl_threshold_for_download)]
+                df = df[df['pchembl_value'].notnull()]
                 df.drop(columns=['bao_label'], errors='ignore', inplace=True)
             else:
                 logger.warning("pchembl_value column not found.")
@@ -290,7 +307,7 @@ async def download_target_async(args):
     if args.dataset == "tdc":
         return
     downloader = ChEMBLDownloader(max_concurrent=args.max_concurrent)
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    training_root = resolve_training_root(args)
     target_ids = []
     
     if args.all_proteins:
@@ -315,7 +332,7 @@ async def download_target_async(args):
             # Process batch concurrently
             tasks = []
             for chembl_id in batch:
-                output_dir = os.path.join(base_dir, 'training_files', 'target_training_datasets', chembl_id)
+                output_dir = str(training_root / chembl_id)
                 output_path = os.path.join(output_dir, args.output_file)
                 
                 if os.path.exists(output_path):
@@ -368,12 +385,13 @@ if __name__ == "__main__":
     parser.add_argument('--all_proteins', action='store_true', help="Download data for all protein targets in ChEMBL")
     parser.add_argument('--target_id', type=str, help="Target ChEMBL ID(s) to search for, comma-separated")
     parser.add_argument('--assay_type', type=str, default='B', help="Assay type(s) to search for, comma-separated")
-    parser.add_argument('--pchembl_threshold_for_download', type=float, default=0, help="Threshold for pChembl value to determine active/inactive")
+    parser.add_argument('--pchembl_threshold_for_download', type=float, default=0, help="Deprecated compatibility option; all non-null pChEMBL values are downloaded")
     parser.add_argument('--output_file', type=str, default='activity_data.csv', help="Output file to save activity data")
     parser.add_argument('--max_cores', type=int, default=multiprocessing.cpu_count() - 1, help="Maximum number of CPU cores to use")
     parser.add_argument('--smiles_input_file', type=str, help="Path to txt file containing ChEMBL IDs")
     parser.add_argument('--max_concurrent', type=int, default=50, help="Maximum number of concurrent requests")
     parser.add_argument('--target_process_batch_size', type=int, default=10, help="Number of targets to process in each batch")
+    parser.add_argument('--training_dir', type=str, default=os.path.join('training_files', 'target_training_datasets'), help="Root directory for downloaded target datasets")
 
     args = parser.parse_args()
 

@@ -1,18 +1,12 @@
 import argparse
-from pathlib import Path
-from types import SimpleNamespace
-from train_deepscreen import train_validation_test_training
-from data_processing import create_final_randomized_training_val_test_sets
-from chembl_downloading import download_target
-import wandb
-import yaml
 import os
-import time
 import random
-import numpy as np
-import torch
+from pathlib import Path
 
 def set_seed(seed):
+    import numpy as np
+    import torch
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -27,16 +21,16 @@ parser = argparse.ArgumentParser(description='DEEPScreen arguments')
 parser.add_argument(
     '--target_id',
     type=str,
-    default="CHEMBL4282",
+    default=None,
     metavar='TID',
-    help='Target ChEMBL ID')
+    help='Target/dataset ID (default: config dataset_name or CHEMBL4282)')
 
 parser.add_argument(
     '--dataset', 
     type=str,
-    default="chembl",
+    default=None,
     metavar='DATASET',
-    help='Dataset format (chembl, moleculenet, tdc) (default: chembl)')
+    help='Dataset format (default: config dataset_format or chembl)')
 
 parser.add_argument(
     '--benchmark',
@@ -95,6 +89,18 @@ parser.add_argument(
     help='Enable scaffold-based splitting')
 
 parser.add_argument(
+    '--split_seed',
+    type=int,
+    default=0,
+    help='Random seed for train/validation/test splitting (default: 0)')
+
+parser.add_argument(
+    '--run_seed',
+    type=int,
+    default=123,
+    help='Random seed for model initialization and training (default: 123)')
+
+parser.add_argument(
     '--augment', 
     type=int,
     default=10,
@@ -129,10 +135,10 @@ parser.add_argument(
 
 parser.add_argument(
     '--pchembl_threshold_for_download',
-    type=int,
+    type=float,
     default=0,
     metavar='DPT',
-    help='Min. number of datapoints required for download (default: 0)')
+    help='Deprecated compatibility option; all non-null pChEMBL values are downloaded')
 
 parser.add_argument(
     '--output_file',
@@ -264,14 +270,47 @@ parser.add_argument(
     help='E-mail for accessing NCBI BLAST web service')
 
 args = None
-run_seed = 123
-def sweep():
-    global args
+DEFAULT_TARGET_ID = "CHEMBL4282"
+DEFAULT_DATASET_FORMAT = "chembl"
 
-    wandb.init(entity = args.entity_name,project=args.project_name, id=args.run_id, resume='allow')
+
+def resolve_dataset_settings(config_parameters, parsed_args):
+    dataset_name = config_parameters.get("dataset_name")
+    if parsed_args.target_id is None:
+        parsed_args.target_id = dataset_name or DEFAULT_TARGET_ID
+    elif dataset_name is not None and dataset_name != parsed_args.target_id:
+        raise ValueError(
+            f"Config dataset_name '{dataset_name}' does not match "
+            f"--target_id '{parsed_args.target_id}'."
+        )
+
+    dataset_format = config_parameters.get("dataset_format")
+    if parsed_args.dataset is None:
+        parsed_args.dataset = dataset_format or DEFAULT_DATASET_FORMAT
+    elif dataset_format is not None and dataset_format != parsed_args.dataset:
+        raise ValueError(
+            f"Config dataset_format '{dataset_format}' does not match "
+            f"--dataset '{parsed_args.dataset}'."
+        )
+    return parsed_args
+
+
+def sweep(split_seed=None, training_data_root=None):
+    import wandb
+
+    from train_deepscreen import train_validation_test_training
+
+    global args
+    if split_seed is None:
+        split_seed = args.split_seed
+    if training_data_root is None:
+        training_data_root = Path(args.training_dir).resolve()
+
+    wandb_args = {"entity": args.entity_name, "project": args.project_name}
+    wandb.init(**wandb_args)
 
     config = wandb.config
-    set_seed(run_seed)
+    set_seed(args.run_seed)
     hp_string = "_".join(f"{k}={v}" for k, v in dict(config).items())
     exp_name = f"{args.en}_sweep_{wandb.run.id}_{hp_string}"
 
@@ -282,7 +321,7 @@ def sweep():
         args.target_id,
         args.model,
         config,
-        args.en,
+        exp_name,
         args.cuda,
         args.run_id,
         args.model_save,
@@ -292,17 +331,26 @@ def sweep():
         args.patience,
         args.warmup,
         args.selection_metric,
-        run_seed,# seed related to torch etc. not dataset splitting, that is defined at i within for i in range
+        args.run_seed,
         args.sweep,
         scheduler = args.with_scheduler,
         use_muon = args.muon,
+        split_seed=split_seed,
+        training_data_root=training_data_root,
         )
 
 
 
 def main():
+    import wandb
+    import yaml
+
+    from chembl_downloading import download_target
+    from data_processing import create_final_randomized_training_val_test_sets
+    from train_deepscreen import train_validation_test_training
+
     global args
-    set_seed(run_seed)
+    set_seed(args.run_seed)
     repeat = 1
     if args.benchmark: 
         repeat = 5
@@ -318,11 +366,15 @@ def main():
 
         with open(os.path.join(config_folder,yaml_file)) as f:
             sweep_config = yaml.safe_load(f)
+        resolve_dataset_settings(sweep_config.get("parameters", {}), args)
     else:
         with open(os.path.join(config_folder,"config.yaml")) as f:
             config = yaml.safe_load(f)
+        resolve_dataset_settings(config["parameters"], args)
             
-    for seed in range(repeat):
+    for seed_offset in range(repeat):
+        split_seed = args.split_seed + seed_offset
+        print(f"Dataset split seed: {split_seed}")
         # Create platform-independent path
         target_training_dataset_path = Path(args.training_dir).resolve()
         target_training_dataset_path.mkdir(parents=True, exist_ok=True)
@@ -345,20 +397,26 @@ def main():
             args.negative_enrichment,
             args.augment,
             args.email,
-            seed)
+            split_seed)
 
         if args.sweep:
 
             sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
 
             # Start sweep job.
-            wandb.agent(sweep_id,function=sweep)
+            wandb.agent(
+                sweep_id,
+                function=lambda: sweep(split_seed, target_training_dataset_path),
+            )
             
         
         else:
             exp_name = args.en
-            if args.dataset == "tdc" and args.benchmark:
-                exp_name = f"{exp_name}_seed_{seed}"
+            if args.benchmark:
+                exp_name = f"{exp_name}_seed_{split_seed}"
+
+            # Each benchmark member is independently reproducible.
+            set_seed(args.run_seed)
 
             train_validation_test_training(
             args.target_id,
@@ -374,10 +432,12 @@ def main():
             args.patience,
             args.warmup,
             args.selection_metric,
-            run_seed,# seed related to torch etc. not dataset splitting, that is defined at i within for i in range
+            args.run_seed,
             args.sweep,
             scheduler=args.with_scheduler,
             use_muon = args.muon,
+            split_seed=split_seed,
+            training_data_root=target_training_dataset_path,
             )
         
 
