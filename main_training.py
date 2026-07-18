@@ -135,10 +135,10 @@ parser.add_argument(
 
 parser.add_argument(
     '--pchembl_threshold_for_download',
-    type=int,
+    type=float,
     default=0,
     metavar='DPT',
-    help='Min. number of datapoints required for download (default: 0)')
+    help='Deprecated compatibility option; all non-null pChEMBL values are downloaded')
 
 parser.add_argument(
     '--output_file',
@@ -305,7 +305,41 @@ def sweep(split_seed=None):
     if split_seed is None:
         split_seed = args.split_seed
 
-    wandb.init(entity = args.entity_name,project=args.project_name, id=args.run_id, resume='allow')
+
+def resolve_dataset_settings(config_parameters, parsed_args):
+    dataset_name = config_parameters.get("dataset_name")
+    if parsed_args.target_id is None:
+        parsed_args.target_id = dataset_name or DEFAULT_TARGET_ID
+    elif dataset_name is not None and dataset_name != parsed_args.target_id:
+        raise ValueError(
+            f"Config dataset_name '{dataset_name}' does not match "
+            f"--target_id '{parsed_args.target_id}'."
+        )
+
+    dataset_format = config_parameters.get("dataset_format")
+    if parsed_args.dataset is None:
+        parsed_args.dataset = dataset_format or DEFAULT_DATASET_FORMAT
+    elif dataset_format is not None and dataset_format != parsed_args.dataset:
+        raise ValueError(
+            f"Config dataset_format '{dataset_format}' does not match "
+            f"--dataset '{parsed_args.dataset}'."
+        )
+    return parsed_args
+
+
+def sweep(split_seed=None, training_data_root=None):
+    import wandb
+
+    from train_deepscreen import train_validation_test_training
+
+    global args
+    if split_seed is None:
+        split_seed = args.split_seed
+    if training_data_root is None:
+        training_data_root = Path(args.training_dir).resolve()
+
+    wandb_args = {"entity": args.entity_name, "project": args.project_name}
+    wandb.init(**wandb_args)
 
     config = wandb.config
     set_seed(args.run_seed)
@@ -319,7 +353,7 @@ def sweep(split_seed=None):
         args.target_id,
         args.model,
         config,
-        args.en,
+        exp_name,
         args.cuda,
         args.run_id,
         args.model_save,
@@ -334,6 +368,7 @@ def sweep(split_seed=None):
         scheduler = args.with_scheduler,
         use_muon = args.muon,
         split_seed=split_seed,
+        training_data_root=training_data_root,
         )
 
 
@@ -401,13 +436,19 @@ def main():
             sweep_id = wandb.sweep(sweep=sweep_config, project=args.project_name)
 
             # Start sweep job.
-            wandb.agent(sweep_id, function=lambda: sweep(split_seed))
+            wandb.agent(
+                sweep_id,
+                function=lambda: sweep(split_seed, target_training_dataset_path),
+            )
             
         
         else:
             exp_name = args.en
-            if args.dataset == "tdc" and args.benchmark:
+            if args.benchmark:
                 exp_name = f"{exp_name}_seed_{split_seed}"
+
+            # Each benchmark member is independently reproducible.
+            set_seed(args.run_seed)
 
             train_validation_test_training(
             args.target_id,
@@ -428,6 +469,7 @@ def main():
             scheduler=args.with_scheduler,
             use_muon = args.muon,
             split_seed=split_seed,
+            training_data_root=target_training_dataset_path,
             )
         
 

@@ -1,6 +1,8 @@
 """Lightweight datasets and DataLoaders used by model training."""
 
 import json
+import math
+import numbers
 import random
 from pathlib import Path
 
@@ -13,6 +15,35 @@ from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
 DEFAULT_TRAINING_DATASET_ROOT = (
     Path(__file__).resolve().parent / "training_files" / "target_training_datasets"
 )
+
+
+def normalize_binary_label(value, context="label"):
+    """Return a canonical integer binary label or fail with a clear error."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            pass
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, numbers.Real) and math.isfinite(float(value)):
+        numeric_value = float(value)
+        if numeric_value in (0.0, 1.0):
+            return int(numeric_value)
+    raise ValueError(
+        f"{context} must be a binary value (0 or 1); received {value!r}. "
+        "The DEEPScreen training pipeline currently supports binary "
+        "classification only."
+    )
+
+
+def normalize_binary_labels(values, context="labels"):
+    return [
+        normalize_binary_label(value, f"{context}[{index}]")
+        for index, value in enumerate(values)
+    ]
 
 
 def seed_worker(worker_id):
@@ -43,12 +74,28 @@ class DEEPScreenDataset(Dataset):
             self.train_val_test_folds = json.load(split_file)
 
         if train_val_test == "all":
-            selected_folds = self.train_val_test_folds
+            selected_folds = [
+                item
+                for split_name in ("training", "validation", "test")
+                for item in self.train_val_test_folds.get(split_name, [])
+            ]
         else:
+            if train_val_test not in self.train_val_test_folds:
+                raise ValueError(
+                    f"Unknown split {train_val_test!r}; expected training, "
+                    "validation, test, or all."
+                )
             selected_folds = self.train_val_test_folds[train_val_test]
 
+        malformed = [item for item in selected_folds if len(item) < 2]
+        if malformed:
+            raise ValueError(f"Malformed split entries in {split_path}: {malformed[:3]}")
+
         self.compid_list = [compid_label[0] for compid_label in selected_folds]
-        self.label_list = [compid_label[1] for compid_label in selected_folds]
+        self.label_list = normalize_binary_labels(
+            [compid_label[1] for compid_label in selected_folds],
+            context=f"{target_id}/{train_val_test}",
+        )
 
     def __len__(self):
         return len(self.compid_list)

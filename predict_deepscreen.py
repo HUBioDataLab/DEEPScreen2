@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
-from models import CNNModel1, CNNModel2, ViT
+from models import CNNModel1, CNNModel2, ViT, YOLOv11Classifier
 from data_processing import save_comp_imgs_from_smiles, initialize_dirs
 import cv2
 import json
@@ -13,10 +13,7 @@ from tqdm import tqdm
 import yaml
 from types import SimpleNamespace
 from data_processing import save_comp_imgs_from_smiles, initialize_dirs,get_prediction_loader, load_deepscreen_labels
-from sklearn.metrics import (
-    roc_auc_score, average_precision_score, accuracy_score, 
-    precision_score, recall_score, f1_score, matthews_corrcoef, confusion_matrix
-)
+from evaluation_metrics import binary_ranking_metrics, prec_rec_f1_acc_mcc
 
 def process_smiles_for_prediction(data):
     """
@@ -225,7 +222,49 @@ def calculate_attn_map(attentions,
     return stitched_map
 
 import pandas as pd
-def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, dropout, hidden_size, window_size, attention_probs_dropout_prob, drop_path_rate, layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio, cuda_selection, map_mode,map_type = "saliency",smiles_file=None):
+
+
+def build_prediction_model(
+    model_name,
+    *,
+    fc1,
+    fc2,
+    dropout,
+    hidden_size,
+    window_size,
+    attention_probs_dropout_prob,
+    drop_path_rate,
+    layer_norm_eps,
+    encoder_stride,
+    embed_dim,
+    depths,
+    mlp_ratio,
+    model_size,
+):
+    if model_name == "CNNModel1":
+        return CNNModel1(fc1, fc2, dropout)
+    if model_name == "CNNModel2":
+        return CNNModel2(fc1, fc2, dropout)
+    if model_name == "ViT":
+        return ViT(
+            window_size,
+            hidden_size,
+            attention_probs_dropout_prob,
+            drop_path_rate,
+            dropout,
+            layer_norm_eps,
+            encoder_stride,
+            embed_dim,
+            depths,
+            mlp_ratio,
+            2,
+        )
+    if model_name == "YOLOv11":
+        return YOLOv11Classifier(2, model_size)
+    raise ValueError(f"Model '{model_name}' is not recognized.")
+
+
+def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, dropout, hidden_size, window_size, attention_probs_dropout_prob, drop_path_rate, layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio, cuda_selection, map_mode,map_type = "saliency",smiles_file=None, model_size="yolo11m"):
     
     current_path_beginning = os.getcwd().split("DEEPScreen")[0]
     current_path_version = os.getcwd().split("DEEPScreen")[1].split("/")[0]
@@ -270,16 +309,55 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
     device = f"cuda:{cuda_selection}" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     
-    # Load Model
-    if model_name == "CNNModel1":
-        model = CNNModel1(fc1, fc2, dropout).to(device)
-    elif model_name == "CNNModel2":
-        model = CNNModel2(fc1, fc2, dropout).to(device)
-    elif model_name == "ViT":
-        model = ViT(window_size, hidden_size, attention_probs_dropout_prob, drop_path_rate, dropout, layer_norm_eps, encoder_stride, embed_dim, depths, mlp_ratio, 2).to(device)
+    try:
+        checkpoint = torch.load(
+            model_path,
+            map_location=device,
+            weights_only=False,
+        )
+    except TypeError:
+        checkpoint = torch.load(model_path, map_location=device)
 
-    checkpoint = torch.load(model_path, map_location=device)
-    if 'model_state_dict' in checkpoint:
+    checkpoint_config = (
+        checkpoint.get("config", {})
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint
+        else {}
+    )
+    model_name = checkpoint_config.get("model_name", model_name)
+    fc1 = checkpoint_config.get("fc1", fc1)
+    fc2 = checkpoint_config.get("fc2", fc2)
+    dropout = checkpoint_config.get("dropout", dropout)
+    hidden_size = checkpoint_config.get("hidden_size", hidden_size)
+    window_size = checkpoint_config.get("window_size", window_size)
+    attention_probs_dropout_prob = checkpoint_config.get(
+        "attention_probs_dropout_prob", attention_probs_dropout_prob
+    )
+    drop_path_rate = checkpoint_config.get("drop_path_rate", drop_path_rate)
+    layer_norm_eps = checkpoint_config.get("layer_norm_eps", layer_norm_eps)
+    encoder_stride = checkpoint_config.get("encoder_stride", encoder_stride)
+    embed_dim = checkpoint_config.get("embed_dim", embed_dim)
+    depths = checkpoint_config.get("depths", depths)
+    mlp_ratio = checkpoint_config.get("mlp_ratio", mlp_ratio)
+    model_size = checkpoint_config.get("model_size", model_size)
+
+    model = build_prediction_model(
+        model_name,
+        fc1=fc1,
+        fc2=fc2,
+        dropout=dropout,
+        hidden_size=hidden_size,
+        window_size=window_size,
+        attention_probs_dropout_prob=attention_probs_dropout_prob,
+        drop_path_rate=drop_path_rate,
+        layer_norm_eps=layer_norm_eps,
+        encoder_stride=encoder_stride,
+        embed_dim=embed_dim,
+        depths=depths,
+        mlp_ratio=mlp_ratio,
+        model_size=model_size,
+    ).to(device)
+
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
     else:
         model.load_state_dict(checkpoint)
@@ -501,31 +579,22 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
         print("="*30)
         
         try:
-            acc = accuracy_score(y_true, y_pred)
-            prec = precision_score(y_true, y_pred, zero_division=0)
-            rec = recall_score(y_true, y_pred, zero_division=0)
-            f1 = f1_score(y_true, y_pred, zero_division=0)
-            mcc = matthews_corrcoef(y_true, y_pred)
-            
-            try:
-                roc_auc = roc_auc_score(y_true, y_prob)
-                pr_auc = average_precision_score(y_true, y_prob)
-            except ValueError:
-                roc_auc = "N/A (One class present)"
-                pr_auc = "N/A"
-            
-            tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+            classification_metrics = prec_rec_f1_acc_mcc(y_true, y_pred)
+            ranking_metrics = binary_ranking_metrics(y_true, y_prob)
 
             metrics = {
                 "split": split,
-                "Accuracy": acc,
-                "Precision": prec,
-                "Recall": rec,
-                "F1-Score": f1,
-                "MCC": mcc,
-                "ROC AUC": roc_auc,
-                "PR AUC": pr_auc,
-                "TP": int(tp), "TN": int(tn), "FP": int(fp), "FN": int(fn)
+                "Accuracy": classification_metrics["Accuracy"],
+                "Precision": classification_metrics["Precision"],
+                "Recall": classification_metrics["Recall"],
+                "F1-Score": classification_metrics["F1-Score"],
+                "MCC": classification_metrics["MCC"],
+                "ROC AUC": ranking_metrics["ROC AUC"],
+                "PR AUC": ranking_metrics["PR AUC"],
+                "TP": classification_metrics["TP"],
+                "TN": classification_metrics["TN"],
+                "FP": classification_metrics["FP"],
+                "FN": classification_metrics["FN"],
             }
             
             for k, v in metrics.items():
@@ -539,6 +608,33 @@ def predict(model_name, model_path, split, target_id, fc1, fc2, batch_size, drop
         except Exception as e:
             print(f"Error calculating metrics: {e}")
 
+
+def run_prediction_from_args(args, params):
+    return predict(
+        args.model,
+        args.model_path,
+        args.split,
+        args.target_id,
+        getattr(params, "fc1", 128),
+        getattr(params, "fc2", 256),
+        args.batch_size,
+        getattr(params, "dropout", 0.0),
+        getattr(params, "hidden_size", 768),
+        getattr(params, "window_size", 7),
+        getattr(params, "attention_probs_dropout_prob", 0.0),
+        getattr(params, "drop_path_rate", 0.1),
+        getattr(params, "layer_norm_eps", 1e-5),
+        getattr(params, "encoder_stride", 32),
+        getattr(params, "embed_dim", 96),
+        getattr(params, "depths", [2, 2, 6, 2]),
+        getattr(params, "mlp_ratio", 4.0),
+        args.cuda,
+        args.map_mode,
+        args.map_type,
+        args.smiles_file,
+        getattr(params, "model_size", "yolo11m"),
+    )
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='DeepScreen Prediction Script')
     parser.add_argument('--model_path', type=str, required=True, help='Path to the trained model state dict')
@@ -547,6 +643,12 @@ if __name__ == "__main__":
     parser.add_argument('--cuda', type=int, default=0, help='CUDA device index')
     parser.add_argument('--split', type=str, default="all", help='Split to predict on (train, validation, test, all)')
     parser.add_argument('--model', type=str, default="CNNModel1", help='Model name (default: CNNModel1)')
+    parser.add_argument(
+        '--config',
+        type=str,
+        default="config/config.yaml",
+        help='Model config for legacy checkpoints without embedded configuration',
+    )
     
     # --- ARGUMENT FOR ATTENTION MAPS ---
     parser.add_argument('--map_mode', type=str, default="none", choices=["none", "all", "avg"],
@@ -571,32 +673,10 @@ if __name__ == "__main__":
         else:
             return d
         
-    with open("config/config.yaml") as f:
+    with open(args.config) as f:
         config = yaml.safe_load(f)
 
     config_ns = dict_to_namespace(config)
     params = config_ns.parameters
     
-    predict(
-        args.model,
-        args.model_path,
-        args.split,
-        args.target_id,
-        params.fc1,
-        params.fc2,
-        params.bs,
-        params.dropout,
-        params.hidden_size,
-        params.window_size,
-        params.attention_probs_dropout_prob,
-        params.drop_path_rate,
-        params.layer_norm_eps,          
-        params.encoder_stride,
-        params.embed_dim,
-        params.depths,
-        params.mlp_ratio,           
-        args.cuda,
-        args.map_mode,
-        args.map_type,
-        args.smiles_file
-        )
+    run_prediction_from_args(args, params)

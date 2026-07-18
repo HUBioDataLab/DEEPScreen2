@@ -24,7 +24,12 @@ from tdc.single_pred import ADME, Tox
 from tqdm import tqdm
 import glob          
 import torch
-from data_loading import DEEPScreenDataset, get_train_test_val_data_loaders
+from data_loading import (
+    DEEPScreenDataset,
+    get_train_test_val_data_loaders,
+    normalize_binary_label,
+    normalize_binary_labels,
+)
 #####################################################
 random.seed(42)  # Very important for reproducibility
 #####################################################
@@ -569,6 +574,10 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
             pandas_df.rename(columns={pandas_df.columns[1]: "canonical_smiles", pandas_df.columns[-2]: "target"}, inplace=True)
             pandas_df = pandas_df[["Drug_ID","canonical_smiles", "target","split"]].copy()
 
+        pandas_df["target"] = normalize_binary_labels(
+            pandas_df["target"].tolist(),
+            context=f"{targetid} target",
+        )
         pandas_df = pandas_df.sort_values(by="canonical_smiles") # This ensures consistent ordering and giving same molecule_chembl_id to molecules across different seeds
         pandas_df["molecule_chembl_id"] = [f"{targetid}{i+1}" for i in range(len(pandas_df))]
 
@@ -1029,24 +1038,47 @@ def load_deepscreen_labels(target_id, parent_path,split):
     
     print(f"Loading labels from {json_path}...")
     try:
-        data = json.load(open(json_path))
+        with open(json_path, encoding="utf-8") as label_file:
+            data = json.load(label_file)
         label_dict = {}
-        
-        # Flatten the dictionary
-        for split_key, sample_list in data.items():
-            if split_key!=split:
-                continue
+        split_aliases = {
+            "train": "training",
+            "valid": "validation",
+            "val": "validation",
+        }
+        requested_split = split_aliases.get(split, split)
+        valid_splits = {"training", "validation", "test", "all"}
+        if requested_split not in valid_splits:
+            raise ValueError(
+                f"Unknown split {split!r}; expected training, validation, "
+                "test, all, train, valid, or val."
+            )
+
+        selected_splits = (
+            ("training", "validation", "test")
+            if requested_split == "all"
+            else (requested_split,)
+        )
+        for split_key in selected_splits:
+            sample_list = data.get(split_key, [])
             for item in sample_list:
                 if len(item) >= 2:
                     comp_id = item[0]
-                    label = int(item[1])
+                    label = normalize_binary_label(
+                        item[1],
+                        context=f"{target_id}/{split_key}/{comp_id}",
+                    )
                     comp_id = re.sub(r'_\d+$', '', comp_id)
+                    if comp_id in label_dict and label_dict[comp_id] != label:
+                        raise ValueError(
+                            f"Conflicting labels for compound {comp_id}: "
+                            f"{label_dict[comp_id]} and {label}"
+                        )
                     label_dict[comp_id] = label
         return label_dict
 
     except Exception as e:
-        print(f"Error parsing label file: {e}")
-        return None
+        raise ValueError(f"Error parsing label file {json_path}: {e}") from e
 
 def get_prediction_loader(target_id, parent_path, label_dict=None, batch_size=32):
     """
