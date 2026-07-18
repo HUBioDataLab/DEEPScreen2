@@ -1,18 +1,12 @@
 import argparse
-from pathlib import Path
-from types import SimpleNamespace
-from train_deepscreen import train_validation_test_training
-from data_processing import create_final_randomized_training_val_test_sets
-from chembl_downloading import download_target
-import wandb
-import yaml
 import os
-import time
 import random
-import numpy as np
-import torch
+from pathlib import Path
 
 def set_seed(seed):
+    import numpy as np
+    import torch
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -303,6 +297,10 @@ def resolve_dataset_settings(config_parameters, parsed_args):
 
 
 def sweep(split_seed=None):
+    import wandb
+
+    from train_deepscreen import train_validation_test_training
+
     global args
     if split_seed is None:
         split_seed = args.split_seed
@@ -341,6 +339,13 @@ def sweep(split_seed=None):
 
 
 def main():
+    import wandb
+    import yaml
+
+    from chembl_downloading import download_target
+    from data_processing import create_final_randomized_training_val_test_sets
+    from train_deepscreen import train_validation_test_training
+
     global args
     set_seed(args.run_seed)
     repeat = 1

@@ -11,12 +11,10 @@ from torch.optim.lr_scheduler import LinearLR
 
 from models import CNNModel1, CNNModel2, ViT, YOLOv11Classifier
 
-from data_processing import get_train_test_val_data_loaders
+from data_loading import get_train_test_val_data_loaders
 from evaluation_metrics import prec_rec_f1_acc_mcc, get_list_of_scores
 
 from sklearn.metrics import roc_auc_score, average_precision_score
-
-from data_processing import generate_images, save_comp_imgs_from_smiles
 
 import wandb
 
@@ -223,7 +221,7 @@ def train_validation_test_training(
     best_val_test_prediction_fl = open(pred_file_path, "w")
 
     # Data Loaders
-    num_workers = int(cfg.get("num_workers", 12))
+    num_workers = int(cfg.get("num_workers", 4))
     train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(
         target_id,
         run_seed,

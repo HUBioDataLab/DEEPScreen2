@@ -18,12 +18,13 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 import multiprocessing
 import csv
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+from torch.utils.data import Dataset, DataLoader
 from chemprop.data import make_split_indices
 from tdc.single_pred import ADME, Tox
 from tqdm import tqdm
 import glob          
 import torch
+from data_loading import DEEPScreenDataset, get_train_test_val_data_loaders
 #####################################################
 random.seed(42)  # Very important for reproducibility
 #####################################################
@@ -31,11 +32,6 @@ import requests
 from io import StringIO
 from pathlib import Path
 from tdc.benchmark_group import admet_group
-
-def seed_worker(worker_id):
-    worker_seed = torch.initial_seed() % 2**32
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
 
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
 current_path_version = os.getcwd().split("DEEPScreen")[1].split(os.sep)[0]
@@ -540,11 +536,6 @@ def negative_enrichment_pipeline(chembl_target_id,
 
     return list(combined_inactives), chemblid_smiles_dict
 
-def make_generator(seed):
-    g = torch.Generator()
-    g.manual_seed(seed)
-    return g
-
 def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,seed):
     """
     split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
@@ -945,90 +936,6 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
 
 
 
-
-class DEEPScreenDataset(Dataset):
-    def __init__(self, target_id, train_val_test,parent_path = os.path.join(training_files_path,"target_training_datasets")):
-        self.target_id = target_id
-        self.train_val_test = train_val_test
-        self.dataset_path = os.path.join(parent_path,target_id)
-        split_path = os.path.join(self.dataset_path, "train_val_test_dict.json")
-        with open(split_path, encoding="utf-8") as split_file:
-            self.train_val_test_folds = json.load(split_file)
-
-        if train_val_test == "all":
-            self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds]
-            self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds]
-        else:
-            self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds[train_val_test]]
-            self.label_list = [compid_label[1] for compid_label in self.train_val_test_folds[train_val_test]]
-    
-    def __len__(self):
-        return len(self.compid_list)
-
-    def __getitem__(self, index):
-        comp_id = self.compid_list[index]
-        
-        img_path = os.path.join(self.dataset_path, "imgs", "{}.png".format(comp_id))     
-            
-        if not os.path.exists(img_path):
-            raise FileNotFoundError(f"Image not found for compound ID: {comp_id}")
-        with Image.open(img_path) as image:
-            img_arr = np.asarray(image, dtype=np.float32) / np.float32(255.0)
-
-        img_arr = img_arr.transpose((2, 0, 1))
-        label = self.label_list[index]
-
-        return img_arr, label, comp_id
-
-
-def get_train_test_val_data_loaders(target_id, seed, batch_size=32, num_workers=12):
-    if num_workers < 0:
-        raise ValueError("num_workers must be greater than or equal to zero")
-
-    loader_options = {
-        "num_workers": num_workers,
-        "persistent_workers": False,
-    }
-    if num_workers > 0:
-        # CUDA is initialized in the training process before iteration starts.
-        # Spawned workers start clean and cannot inherit its CUDA handles.
-        loader_options["multiprocessing_context"] = "spawn"
-
-    training_dataset = DEEPScreenDataset(target_id, "training")
-    validation_dataset = DEEPScreenDataset(target_id, "validation")
-    test_dataset = DEEPScreenDataset(target_id, "test")
-    g = make_generator(seed)
-    train_sampler = SubsetRandomSampler(range(len(training_dataset)),generator = g)
-    train_loader = DataLoader(
-        training_dataset,
-        batch_size=batch_size,
-        sampler=train_sampler,
-        generator=g,
-        worker_init_fn=seed_worker,
-        **loader_options,
-    )
-    
-    validation_sampler = SubsetRandomSampler(range(len(validation_dataset)),generator = g)
-    validation_loader = DataLoader(
-        validation_dataset,
-        batch_size=batch_size,
-        sampler=validation_sampler,
-        generator=g,
-        worker_init_fn=seed_worker,
-        **loader_options,
-    )
-
-    test_sampler = SubsetRandomSampler(range(len(test_dataset)),generator = g)
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        sampler=test_sampler,
-        generator=g,
-        worker_init_fn=seed_worker,
-        **loader_options,
-    )
-
-    return train_loader, validation_loader, test_loader
 
 def get_training_target_list(chembl_version):
     target_df = pd.read_csv(os.path.join(training_files_path, "{}_training_target_list.txt".format(chembl_version)), index_col=False, header=None)
