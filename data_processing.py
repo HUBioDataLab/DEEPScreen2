@@ -951,7 +951,9 @@ class DEEPScreenDataset(Dataset):
         self.target_id = target_id
         self.train_val_test = train_val_test
         self.dataset_path = os.path.join(parent_path,target_id)
-        self.train_val_test_folds = json.load(open(os.path.join(self.dataset_path, "train_val_test_dict.json")))
+        split_path = os.path.join(self.dataset_path, "train_val_test_dict.json")
+        with open(split_path, encoding="utf-8") as split_file:
+            self.train_val_test_folds = json.load(split_file)
 
         if train_val_test == "all":
             self.compid_list = [compid_label[0] for compid_label in self.train_val_test_folds]
@@ -970,30 +972,61 @@ class DEEPScreenDataset(Dataset):
             
         if not os.path.exists(img_path):
             raise FileNotFoundError(f"Image not found for compound ID: {comp_id}")
-        img_arr = np.array(Image.open(img_path))
-        
-        if img_arr is None:
-            raise FileNotFoundError(f"Image not found or cannot be read: {img_path}")
+        with Image.open(img_path) as image:
+            img_arr = np.asarray(image, dtype=np.float32) / np.float32(255.0)
 
-        img_arr = np.array(img_arr) / 255.0
         img_arr = img_arr.transpose((2, 0, 1))
         label = self.label_list[index]
 
         return img_arr, label, comp_id
 
-def get_train_test_val_data_loaders(target_id, seed,batch_size=32):
+
+def get_train_test_val_data_loaders(target_id, seed, batch_size=32, num_workers=12):
+    if num_workers < 0:
+        raise ValueError("num_workers must be greater than or equal to zero")
+
+    loader_options = {
+        "num_workers": num_workers,
+        "persistent_workers": False,
+    }
+    if num_workers > 0:
+        # CUDA is initialized in the training process before iteration starts.
+        # Spawned workers start clean and cannot inherit its CUDA handles.
+        loader_options["multiprocessing_context"] = "spawn"
+
     training_dataset = DEEPScreenDataset(target_id, "training")
     validation_dataset = DEEPScreenDataset(target_id, "validation")
     test_dataset = DEEPScreenDataset(target_id, "test")
     g = make_generator(seed)
     train_sampler = SubsetRandomSampler(range(len(training_dataset)),generator = g)
-    train_loader = DataLoader(training_dataset, batch_size=batch_size, sampler=train_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
+    train_loader = DataLoader(
+        training_dataset,
+        batch_size=batch_size,
+        sampler=train_sampler,
+        generator=g,
+        worker_init_fn=seed_worker,
+        **loader_options,
+    )
     
     validation_sampler = SubsetRandomSampler(range(len(validation_dataset)),generator = g)
-    validation_loader = DataLoader(validation_dataset, batch_size=batch_size, sampler=validation_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
+    validation_loader = DataLoader(
+        validation_dataset,
+        batch_size=batch_size,
+        sampler=validation_sampler,
+        generator=g,
+        worker_init_fn=seed_worker,
+        **loader_options,
+    )
 
     test_sampler = SubsetRandomSampler(range(len(test_dataset)),generator = g)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler,generator=g,worker_init_fn=seed_worker,num_workers=12)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        sampler=test_sampler,
+        generator=g,
+        worker_init_fn=seed_worker,
+        **loader_options,
+    )
 
     return train_loader, validation_loader, test_loader
 

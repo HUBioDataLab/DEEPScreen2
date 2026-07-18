@@ -28,9 +28,6 @@ from muon import SingleDeviceMuonWithAuxAdam
 
 warnings.filterwarnings(action='ignore')
 
-use_gpu = torch.cuda.is_available()
-
-
 sep = os.sep
 
 current_path_beginning = os.getcwd().split("DEEPScreen")[0]
@@ -68,7 +65,7 @@ def save_best_model_predictions(experiment_name, epoch, validation_scores_dict, 
 
 def get_device(cuda_selection):
     device = "cpu"
-    if use_gpu:
+    if torch.cuda.is_available():
         print("GPU is available on this device!")
         device = "cuda:"+str(cuda_selection)
     else:
@@ -77,7 +74,7 @@ def get_device(cuda_selection):
 
 def calculate_val_test_loss(model, criterion, data_loader, device):
     total_count = 0
-    total_loss = 0.0
+    summed_sample_loss = 0.0
     all_comp_ids = []
     all_labels = []
     all_predictions = []
@@ -85,11 +82,12 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
 
     for i, data in enumerate(tqdm(data_loader)):
         img_arrs, labels, comp_ids = data
-        img_arrs, labels = torch.tensor(img_arrs).type(torch.FloatTensor).to(device), torch.tensor(labels).to(device)
+        img_arrs = img_arrs.to(device=device, dtype=torch.float32)
+        labels = labels.to(device=device, dtype=torch.long)
         total_count += len(comp_ids)
         y_pred = model(img_arrs).to(device)
         loss = criterion(y_pred, labels)
-        total_loss += float(loss.item())
+        summed_sample_loss += float(loss.item()) * len(comp_ids)
         all_comp_ids.extend(list(comp_ids))
         _, preds = torch.max(y_pred, 1)
         all_labels.extend(list(labels.detach().cpu().numpy()))
@@ -98,7 +96,8 @@ def calculate_val_test_loss(model, criterion, data_loader, device):
         probs = torch.softmax(y_pred, dim=1) 
         all_pred_probs.extend(probs.detach().cpu().numpy())
 
-    return total_loss, total_count, all_comp_ids, all_labels, all_predictions, all_pred_probs
+    mean_loss = summed_sample_loss / total_count if total_count else float("nan")
+    return mean_loss, total_count, all_comp_ids, all_labels, all_predictions, all_pred_probs
 
 def aggregate_predictions(comp_ids, labels, predictions, pred_probs):
 
@@ -224,7 +223,13 @@ def train_validation_test_training(
     best_val_test_prediction_fl = open(pred_file_path, "w")
 
     # Data Loaders
-    train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(target_id,run_seed, cfg['bs'])
+    num_workers = int(cfg.get("num_workers", 12))
+    train_loader, valid_loader, test_loader = get_train_test_val_data_loaders(
+        target_id,
+        run_seed,
+        cfg['bs'],
+        num_workers=num_workers,
+    )
 
     # ---- 5. DYNAMIC MODEL LOADING ----
     # This is the "Bugless" part. We map model names to classes and specific args.
@@ -373,7 +378,7 @@ def train_validation_test_training(
     for e in range(n_epoch):
         epoch = e + start_epoch
         total_training_count = 0
-        total_training_loss = 0.0
+        summed_training_sample_loss = 0.0
         print("Epoch :{}".format(epoch))
         model.train()
         batch_number = 0
@@ -386,8 +391,8 @@ def train_validation_test_training(
             batch_number += 1
             optimizer.zero_grad()
             img_arrs, labels, comp_ids = data
-            img_arrs = torch.tensor(img_arrs).type(torch.FloatTensor).to(device)
-            labels = torch.tensor(labels).to(device)
+            img_arrs = img_arrs.to(device=device, dtype=torch.float32)
+            labels = labels.to(device=device, dtype=torch.long)
 
             total_training_count += len(comp_ids)
 
@@ -399,8 +404,8 @@ def train_validation_test_training(
             probs = torch.softmax(y_pred, dim=1)
             all_training_probs.extend(probs.detach().cpu().numpy())
 
-            loss = criterion(y_pred, labels)  
-            total_training_loss += float(loss.item())
+            loss = criterion(y_pred, labels)
+            summed_training_sample_loss += float(loss.item()) * len(comp_ids)
             loss.backward()
             optimizer.step()
 
@@ -413,9 +418,14 @@ def train_validation_test_training(
         if scheduler:
             scheduler.step()
  
-        print("Epoch {} training loss:".format(epoch), total_training_loss)
-        
-        wandb.log({"Loss/train": total_training_loss, "epoch": epoch})
+        mean_training_loss = (
+            summed_training_sample_loss / total_training_count
+            if total_training_count
+            else float("nan")
+        )
+        print("Epoch {} mean training loss:".format(epoch), mean_training_loss)
+
+        wandb.log({"Loss/train": mean_training_loss, "epoch": epoch})
         
         training_perf_dict = dict()
         try:
@@ -445,7 +455,7 @@ def train_validation_test_training(
             print("Validation mode:", not model.training)
 
             # --- VALIDATION ---
-            total_val_loss, total_val_count, raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs = calculate_val_test_loss(model, criterion, valid_loader, device)
+            val_loss, total_val_count, raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs = calculate_val_test_loss(model, criterion, valid_loader, device)
 
             all_val_comp_ids, all_val_labels, val_predictions, val_pred_probs = aggregate_predictions(
                 raw_val_comp_ids, raw_val_labels, raw_val_predictions, raw_val_probs
@@ -470,7 +480,7 @@ def train_validation_test_training(
             for metric, value in val_perf_dict.items():
                 wandb.log({f"Validation/{metric}": value, "epoch": epoch})
 
-            total_test_loss, total_test_count, raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs = calculate_val_test_loss(
+            test_loss, total_test_count, raw_test_comp_ids, raw_test_labels, raw_test_predictions, raw_test_probs = calculate_val_test_loss(
                 model, criterion, test_loader, device)
 
             all_test_comp_ids, all_test_labels, test_predictions, test_pred_probs = aggregate_predictions(
@@ -509,8 +519,8 @@ def train_validation_test_training(
                     print("Early stopping number : ", early_stopping_counter)
                     if early_stopping_counter >= patience:
 
-                        wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
-                        wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
+                        wandb.log({"Loss/validation": val_loss, "epoch": epoch})
+                        wandb.log({"Loss/test": test_loss, "epoch": epoch})
 
                         score_list = get_list_of_scores()
                         if not best_test_performance_dict:
@@ -549,8 +559,8 @@ def train_validation_test_training(
                 )
 
             
-        wandb.log({"Loss/validation": total_val_loss, "epoch": epoch})
-        wandb.log({"Loss/test": total_test_loss, "epoch": epoch})
+        wandb.log({"Loss/validation": val_loss, "epoch": epoch})
+        wandb.log({"Loss/test": test_loss, "epoch": epoch})
 
         if epoch == n_epoch - 1:
             score_list = get_list_of_scores()
