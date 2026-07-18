@@ -112,6 +112,11 @@ class DEEPScreenDataset(Dataset):
                 np.asarray(image, dtype=np.float32) / np.float32(255.0)
             )
 
+        if image_array.ndim != 3 or image_array.shape[2] != 3:
+            raise ValueError(
+                f"Expected an RGB image at {image_path}, got {image_array.shape}"
+            )
+
         return image_array.transpose((2, 0, 1)), self.label_list[index], comp_id
 
 
@@ -120,7 +125,9 @@ def get_train_test_val_data_loaders(
     seed,
     batch_size=32,
     num_workers=4,
+    parent_path=DEFAULT_TRAINING_DATASET_ROOT,
 ):
+    """Build deterministic loaders while honoring a caller-provided dataset root."""
     num_workers = int(num_workers)
     if num_workers < 0:
         raise ValueError("num_workers must be greater than or equal to zero")
@@ -133,16 +140,15 @@ def get_train_test_val_data_loaders(
         # Spawn prevents workers from inheriting the parent's CUDA handles.
         loader_options["multiprocessing_context"] = "spawn"
 
-    training_dataset = DEEPScreenDataset(target_id, "training")
-    validation_dataset = DEEPScreenDataset(target_id, "validation")
-    test_dataset = DEEPScreenDataset(target_id, "test")
-    generator = make_generator(seed)
+    datasets = (
+        DEEPScreenDataset(target_id, "training", parent_path=parent_path),
+        DEEPScreenDataset(target_id, "validation", parent_path=parent_path),
+        DEEPScreenDataset(target_id, "test", parent_path=parent_path),
+    )
 
-    def make_loader(dataset):
-        sampler = SubsetRandomSampler(
-            range(len(dataset)),
-            generator=generator,
-        )
+    def make_loader(dataset, generator_seed):
+        generator = make_generator(generator_seed)
+        sampler = SubsetRandomSampler(range(len(dataset)), generator=generator)
         return DataLoader(
             dataset,
             batch_size=batch_size,
@@ -152,8 +158,7 @@ def get_train_test_val_data_loaders(
             **loader_options,
         )
 
-    return (
-        make_loader(training_dataset),
-        make_loader(validation_dataset),
-        make_loader(test_dataset),
+    return tuple(
+        make_loader(dataset, int(seed) + offset)
+        for offset, dataset in enumerate(datasets)
     )
