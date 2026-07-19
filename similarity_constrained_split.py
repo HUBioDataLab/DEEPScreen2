@@ -8,7 +8,7 @@ from typing import Sequence
 
 import numpy as np
 from rdkit import Chem, DataStructs
-from rdkit.Chem import AllChem
+from rdkit.Chem import rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import lil_matrix
@@ -67,8 +67,12 @@ def _validate_inputs(
 def _build_similarity_matrix(
     mols: Sequence[Chem.Mol], fingerprint_bits: int
 ) -> np.ndarray:
+    fingerprint_generator = rdFingerprintGenerator.GetMorganGenerator(
+        radius=2,
+        fpSize=fingerprint_bits,
+    )
     fingerprints = [
-        AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=fingerprint_bits)
+        fingerprint_generator.GetFingerprint(mol)
         for mol in mols
     ]
     similarities = np.empty((len(fingerprints), len(fingerprints)), dtype=np.float64)
