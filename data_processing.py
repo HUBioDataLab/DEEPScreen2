@@ -20,6 +20,7 @@ import multiprocessing
 import csv
 from torch.utils.data import Dataset, DataLoader
 from chemprop.data import make_split_indices
+from similarity_constrained_split import make_similarity_constrained_scaffold_split
 from tdc.single_pred import ADME, Tox
 from tqdm import tqdm
 import glob          
@@ -541,7 +542,26 @@ def negative_enrichment_pipeline(chembl_target_id,
 
     return list(combined_inactives), chemblid_smiles_dict
 
-def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaffold,targetid,target_prediction_dataset_path,dataset,no_fix_tdc ,pchembl_threshold,subsampling,max_total_samples,similarity_threshold,negative_enrichment,augmentation_angle,email,seed):
+def create_final_randomized_training_val_test_sets(
+    activity_data,
+    max_cores,
+    scaffold,
+    targetid,
+    target_prediction_dataset_path,
+    dataset,
+    no_fix_tdc,
+    pchembl_threshold,
+    subsampling,
+    max_total_samples,
+    similarity_threshold,
+    negative_enrichment,
+    augmentation_angle,
+    email,
+    seed,
+    similarity_constrained_scaffold=False,
+    split_max_mean_similarity=0.5,
+    split_max_pair_similarity=0.8,
+):
     """
     split_dict : tdc dataset split object, dict of keys: string of training, valid, test; values: pd dataframes
     """
@@ -771,7 +791,15 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
                 training_inact_comp_id_list,
                 val_inact_comp_id_list,
                 test_inact_comp_id_list
-            ) = train_val_test_split(smiles_file, scaffold, augmentation_angle,seed = seed)
+            ) = train_val_test_split(
+                smiles_file,
+                scaffold,
+                augmentation_angle,
+                seed=seed,
+                similarity_constrained_scaffold=similarity_constrained_scaffold,
+                max_mean_similarity=split_max_mean_similarity,
+                max_pair_similarity=split_max_pair_similarity,
+            )
 
         
             print("Train act len : ",len(training_act_comp_id_list))
@@ -847,12 +875,27 @@ def create_final_randomized_training_val_test_sets(activity_data,max_cores,scaff
 
 
 
-def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_ratios=(0.8, 0.1, 0.1), seed=42):
+def train_val_test_split(
+    smiles_file,
+    scaffold_split,
+    augmentation_angle,
+    split_ratios=(0.8, 0.1, 0.1),
+    seed=42,
+    similarity_constrained_scaffold=False,
+    max_mean_similarity=0.5,
+    max_pair_similarity=0.8,
+):
     """
     Splits data into train, validation, and test sets. 
     Ensures all rotations (augmented images) of a single molecule stay within the same set
     to prevent data leakage during model training.
     """
+
+    if scaffold_split and similarity_constrained_scaffold:
+        raise ValueError(
+            "scaffold_split and similarity_constrained_scaffold are mutually "
+            "exclusive"
+        )
 
     # Defensive check: Ensure 360 is divisible by the angle
     if 360 % augmentation_angle != 0:
@@ -883,7 +926,64 @@ def train_val_test_split(smiles_file, scaffold_split, augmentation_angle, split_
                 augmented.append(f"{root_id}_{angle}")
         return augmented
 
-    if scaffold_split:
+    if similarity_constrained_scaffold:
+        print(
+            "--- Mode: Similarity-Constrained Scaffold Split "
+            "(ECFP4/Tanimoto) ---"
+        )
+        all_root_ids = act_list + inact_list
+        smiles_by_id = df.set_index('molecule_chembl_id')['canonical_smiles']
+        smiles_list = [smiles_by_id.loc[cid] for cid in all_root_ids]
+        labels = [1] * len(act_list) + [0] * len(inact_list)
+
+        df_root = pd.DataFrame({
+            'molecule_chembl_id': all_root_ids,
+            'smiles': smiles_list,
+            'label': labels,
+        })
+        mols = [Chem.MolFromSmiles(s) for s in df_root['smiles']]
+        train_idx, val_idx, test_idx, diagnostics = (
+            make_similarity_constrained_scaffold_split(
+                mols,
+                labels,
+                split_ratios=split_ratios,
+                max_mean_similarity=max_mean_similarity,
+                max_pair_similarity=max_pair_similarity,
+                seed=seed,
+            )
+        )
+
+        diagnostics_path = Path(smiles_file).with_name(
+            'similarity_constrained_split_diagnostics.json'
+        )
+        with diagnostics_path.open('w') as diagnostics_file:
+            json.dump(diagnostics, diagnostics_file, indent=2)
+
+        print(
+            "Validation -> train max similarity: "
+            f"mean={diagnostics['validation_to_training']['mean_max']:.4f}, "
+            f"maximum={diagnostics['validation_to_training']['maximum']:.4f}"
+        )
+        print(
+            "Test -> train max similarity: "
+            f"mean={diagnostics['test_to_training']['mean_max']:.4f}, "
+            f"maximum={diagnostics['test_to_training']['maximum']:.4f}"
+        )
+        print(f"Split diagnostics: {diagnostics_path}")
+
+        tr_df = df_root.iloc[train_idx]
+        vl_df = df_root.iloc[val_idx]
+        ts_df = df_root.iloc[test_idx]
+
+        tr_act_roots = tr_df[tr_df['label'] == 1]['molecule_chembl_id'].tolist()
+        vl_act_roots = vl_df[vl_df['label'] == 1]['molecule_chembl_id'].tolist()
+        ts_act_roots = ts_df[ts_df['label'] == 1]['molecule_chembl_id'].tolist()
+
+        tr_inact_roots = tr_df[tr_df['label'] == 0]['molecule_chembl_id'].tolist()
+        vl_inact_roots = vl_df[vl_df['label'] == 0]['molecule_chembl_id'].tolist()
+        ts_inact_roots = ts_df[ts_df['label'] == 0]['molecule_chembl_id'].tolist()
+
+    elif scaffold_split:
         print("--- Mode: Scaffold Balanced Split (Grouping by Molecule) ---")
         all_root_ids = act_list + inact_list
         smiles_list = [df[df['molecule_chembl_id'] == cid]['canonical_smiles'].values[0] for cid in all_root_ids]

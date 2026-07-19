@@ -83,10 +83,35 @@ parser.add_argument(
     help='Disable custom fixation for the broken labels in tdc (fixing is enabled by default)')
 
 
-parser.add_argument(
+split_mode_group = parser.add_mutually_exclusive_group()
+
+split_mode_group.add_argument(
     '--scaffold',
     action='store_true',
     help='Enable scaffold-based splitting')
+
+split_mode_group.add_argument(
+    '--similarity_constrained_scaffold',
+    action='store_true',
+    help=(
+        'Enable scaffold-disjoint splitting constrained by ECFP4 Tanimoto '
+        'similarity'))
+
+parser.add_argument(
+    '--split_max_mean_similarity',
+    type=float,
+    default=0.5,
+    help=(
+        'Strict upper bound for validation-to-training and test-to-training '
+        'mean maximum similarity (default: 0.5)'))
+
+parser.add_argument(
+    '--split_max_pair_similarity',
+    type=float,
+    default=0.8,
+    help=(
+        'Strict upper bound for every validation-to-training and '
+        'test-to-training molecular similarity (default: 0.8)'))
 
 parser.add_argument(
     '--split_seed',
@@ -403,6 +428,12 @@ def main():
         with open(os.path.join(config_folder,"config.yaml")) as f:
             config = yaml.safe_load(f)
         resolve_dataset_settings(config["parameters"], args)
+
+    if args.similarity_constrained_scaffold and args.dataset == "tdc":
+        raise ValueError(
+            "--similarity_constrained_scaffold cannot be used with TDC datasets "
+            "because their train/validation/test split is predefined."
+        )
             
     for seed_offset in range(repeat):
         split_seed = args.split_seed + seed_offset
@@ -429,7 +460,11 @@ def main():
             args.negative_enrichment,
             args.augment,
             args.email,
-            split_seed)
+            split_seed,
+            similarity_constrained_scaffold=args.similarity_constrained_scaffold,
+            split_max_mean_similarity=args.split_max_mean_similarity,
+            split_max_pair_similarity=args.split_max_pair_similarity,
+        )
 
         if args.sweep:
 
