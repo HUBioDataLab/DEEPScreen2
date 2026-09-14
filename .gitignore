@@ -14,3 +14,10 @@ training_files/admet_group
 training_files/admet_group.zip
 saved_models
 CLAUDE.md
+*_activity_data.csv
+*_train_val_test_dict.json
+predictions_*.csv
+drugbank_*.png
+selected_drugbank_candidates_*.csv
+analyze_drugbank_consensus_*.py
+plot_drugbank_*.py
