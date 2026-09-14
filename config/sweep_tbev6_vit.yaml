@@ -1,0 +1,55 @@
+# TBEV6 ViT (SwinV2) sweep.
+# Diagnosis from atabeyunlu/TBEV6 history: ViT+AdamW(lr=1e-5) collapsed to
+# all-negative (train ROC 0.499) while ViT+Muon (lr=1e-4, muon_lr=0.02) was the
+# best run (val ROC 0.893, val MCC 0.386) but still overfit (train ROC 0.997).
+# Sweep stays on Muon, widens LR/muon_lr, and raises att-drop/drop-path.
+method: bayes
+metric:
+  name: Validation/MCC   # overwritten by run_sweep_tbev6.py from --selection_metric
+  goal: maximize
+parameters:
+  model_name:
+    value: ViT
+
+  epoch:
+    value: 80
+  bs:
+    value: 128
+
+  # --- ViT (SwinV2) specifics ---
+  window_size:
+    value: 7
+  hidden_size:
+    value: 768
+  embed_dim:
+    value: 96
+  depths:
+    values: [[2, 2, 6, 2]]
+  mlp_ratio:
+    value: 4
+  attention_probs_dropout_prob:
+    values: [0.1, 0.25]
+  drop_path_rate:
+    values: [0.2, 0.4]
+  layer_norm_eps:
+    value: 1.0e-05
+  encoder_stride:
+    value: 32
+
+  # --- Common ---
+  learning_rate:
+    distribution: log_uniform_values
+    min: 5.0e-05
+    max: 5.0e-04
+  dropout:
+    values: [0.25, 0.4]
+  end_learning_rate_factor:
+    values: [0.1, 0.2]
+  use_muon:
+    value: True
+  muon_lr:
+    distribution: log_uniform_values
+    min: 0.0025
+    max: 0.025
+  num_workers:
+    value: 4

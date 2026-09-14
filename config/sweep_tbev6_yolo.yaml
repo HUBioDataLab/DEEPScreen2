@@ -1,0 +1,35 @@
+# TBEV6 YOLOv11 classification sweep.
+# First YOLO runs for TBEV6: fine-tune from the pretrained yolo11m-cls.pt
+# checkpoint (must be present in the repo root on Anzu; ultralytics
+# auto-downloads it if missing). Lower LR than from-scratch models since the
+# backbone is pretrained; shorter schedule (50 epochs) + early stopping.
+method: bayes
+metric:
+  name: Validation/MCC   # overwritten by run_sweep_tbev6.py from --selection_metric
+  goal: maximize
+parameters:
+  model_name:
+    value: YOLOv11
+
+  epoch:
+    value: 50
+  bs:
+    value: 128
+
+  # --- YOLO specifics ---
+  model_size:
+    values: [yolo11m]
+
+  # --- Common ---
+  learning_rate:
+    distribution: log_uniform_values
+    min: 1.0e-05
+    max: 1.0e-04
+  dropout:
+    value: 0.25
+  end_learning_rate_factor:
+    values: [0.1, 0.2]
+  use_muon:
+    value: False
+  num_workers:
+    value: 4

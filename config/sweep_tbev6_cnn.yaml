@@ -1,0 +1,36 @@
+# TBEV6 CNN sweep (CNNModel1 + CNNModel2).
+# Diagnosis from atabeyunlu/TBEV6 history: heavy overfit (train ROC ~0.99 vs
+# val ~0.83) with AdamW lr=1e-5, and val recall collapse (~0.08). Stronger
+# dropout, higher/swept LR, scheduler decay and MCC-based selection target this.
+method: bayes
+metric:
+  name: Validation/MCC   # overwritten by run_sweep_tbev6.py from --selection_metric
+  goal: maximize
+parameters:
+  model_name:
+    values: [CNNModel1, CNNModel2]
+
+  epoch:
+    value: 80
+  bs:
+    value: 128
+
+  # --- CNN specifics (CNNModel1: flatten 32*8*8 -> fc1; CNNModel2: GAP 256 -> fc1) ---
+  fc1:
+    values: [128, 256]
+  fc2:
+    values: [64, 128, 256]
+
+  # --- Common ---
+  learning_rate:
+    distribution: log_uniform_values
+    min: 3.0e-05
+    max: 3.0e-04
+  dropout:
+    values: [0.3, 0.4, 0.5]
+  end_learning_rate_factor:
+    values: [0.1, 0.2]
+  use_muon:
+    value: False
+  num_workers:
+    value: 4
