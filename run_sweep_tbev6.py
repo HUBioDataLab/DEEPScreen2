@@ -29,9 +29,12 @@ Diagnosis baked into config/sweep_tbev6_*.yaml (from atabeyunlu/TBEV6):
 """
 
 import argparse
+import json
 import random
 import sys
 from pathlib import Path
+
+import wandb
 
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -212,14 +215,10 @@ def main():
         sweep_config = load_sweep_config(family, args.selection_metric)
 
         print(f"\n=== Sweep config for {family} ({MODEL_NAME_BY_FAMILY[family]}) ===")
-        import json
-
         print(json.dumps(sweep_config, indent=2))
 
         if args.dry_run:
             continue
-
-        import wandb
 
         sweep_id = sweep_ids.get(family) or wandb.sweep(
             sweep=sweep_config,
