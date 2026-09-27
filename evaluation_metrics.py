@@ -11,6 +11,7 @@ def _to_python_list(values):
 
 
 def prec_rec_f1_acc_mcc(y_true, y_pred):
+    """Compute binary metrics, with FDR defined as 0 for no positive predictions."""
     performance_threshold_dict = dict()
     y_true = _to_python_list(y_true)
     y_pred = _to_python_list(y_pred)
@@ -26,6 +27,7 @@ def prec_rec_f1_acc_mcc(y_true, y_pred):
     )
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
     performance_threshold_dict["Precision"] = float(precision)
+    performance_threshold_dict["FDR"] = float(fp / (tp + fp)) if tp + fp else 0.0
     performance_threshold_dict["Recall"] = float(recall)
     performance_threshold_dict["F1-Score"] = float(f1_score)
     performance_threshold_dict["Accuracy"] = float(accuracy)
@@ -50,4 +52,4 @@ def binary_ranking_metrics(y_true, positive_probabilities):
     }
 
 def get_list_of_scores():
-    return ["Precision", "Recall", "F1-Score", "Accuracy", "MCC", "TP", "FP", "TN", "FN"]
+    return ["Precision", "FDR", "Recall", "F1-Score", "Accuracy", "MCC", "TP", "FP", "TN", "FN"]

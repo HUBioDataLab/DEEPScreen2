@@ -166,6 +166,11 @@ def _metric_improved(current_score, best_score, has_best_model):
 
 
 def _write_final_results(result_path, prediction_path, performance, predictions):
+    if "FDR" not in performance:
+        # Older checkpoints contain confusion counts but no FDR metric.
+        performance = dict(performance)
+        tp, fp = performance["TP"], performance["FP"]
+        performance["FDR"] = float(fp / (tp + fp)) if tp + fp else 0.0
     with open(result_path, "w", encoding="utf-8") as result_file:
         for score in get_list_of_scores():
             result_file.write(f"Test {score}:\t{performance[score]}\n")
